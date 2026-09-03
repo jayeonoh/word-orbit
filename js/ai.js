@@ -107,7 +107,7 @@ const WORD_FIELDS = `{
    "definition": "one very short, child-friendly English definition that fits THIS context (max 10 words, everyday words only — explain it the way a kind teacher would to a child of this age, not like a dictionary)",
    "example": "one new, simple example sentence using the word (max 12 words)",
    "distractors": ["four", "plausible", "wrong", "definitions of similar length and simplicity"],
-   "topic": "one of: animals, adventure, space, nature, friendship, school, family, fantasy, science, sports, other",
+   "topic": "one of: animals, adventure, space, nature, friendship, school, family, fantasy, science, sports, humour, mystery, history, other",
    "korean": "짧은 한국어 뜻"
   }`;
 const WORD_SCHEMA = `Return JSON only:

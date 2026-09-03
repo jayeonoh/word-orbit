@@ -1,10 +1,10 @@
 // app.js — 화면과 흐름. 프레임워크 없이 동작합니다.
-import { db } from './db.js?v=5';
-import * as srs from './srs.js?v=5';
-import * as ai from './ai.js?v=5';
-import { SAMPLE_WORDS, TOPICS, SOURCES } from './data.js?v=5';
-import { recommend } from './books.js?v=5';
-import { pageSentences } from './ocr.js?v=5';
+import { db } from './db.js?v=6';
+import * as srs from './srs.js?v=6';
+import * as ai from './ai.js?v=6';
+import { SAMPLE_WORDS, TOPICS } from './data.js?v=6';
+import { recommend, browse, BANDS, BAND_LABEL, KIND_LABEL, BURDEN_LABEL, badgeText, hasAward, childBand, gradeFromAge, STATS, BOOKS as BOOKS_ALL } from './books.js?v=6';
+import { pageSentences } from './ocr.js?v=6';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -15,7 +15,8 @@ const NAV = [
   { id: 'home', label: '오늘의 학습', sub: 'Today', icon: '✦' },
   { id: 'words', label: '나의 단어', sub: 'My words', icon: '◉' },
   { id: 'memory', label: '기억 보관소', sub: 'Memory room', icon: '☆' },
-  { id: 'books', label: '다음에 읽을 책', sub: 'Book shelf', icon: '▤' },
+  { id: 'books', label: '다음에 읽을 책', sub: 'Next chapter', icon: '▤' },
+  { id: 'shelf', label: '나의 책장', sub: 'My bookshelf', icon: '📚' },
   { id: 'parents', label: '부모 리포트', sub: 'For parents', icon: '☺' },
 ];
 const ORB_COLORS = ['purple', 'green', 'orange', 'blue', 'pink'];
@@ -34,19 +35,27 @@ function toast(msg, kind = 'info') {
   setTimeout(() => el.classList.add('show'), 10);
   setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, 3200);
 }
-function speak(text, lang = 'en-AU') {
+const ACCENTS = { 'en-US': '미국식', 'en-GB': '영국식', 'en-AU': '호주식' };
+function accentLang() { return (state.profile && state.profile.accent) || 'en-US'; }
+function speak(text, lang) {
   try {
+    lang = lang || accentLang();
     speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text); u.lang = lang; u.rate = 0.9;
-    const v = speechSynthesis.getVoices().find(v => v.lang === lang) || speechSynthesis.getVoices().find(v => v.lang.startsWith('en'));
+    const u = new SpeechSynthesisUtterance(text); u.lang = lang; u.rate = 0.85;
+    const voices = speechSynthesis.getVoices();
+    const norm = v => v.lang.replace('_', '-').toLowerCase();
+    // 같은 지역 목소리 중 기본/고품질 우선, 없으면 아무 영어 목소리
+    const v = voices.filter(v => norm(v) === lang.toLowerCase()).sort((a, b) => (b.default ? 1 : 0) - (a.default ? 1 : 0) || (b.localService ? 1 : 0) - (a.localService ? 1 : 0))[0]
+      || voices.find(v => norm(v).startsWith('en'));
     if (v) u.voice = v;
     speechSynthesis.speak(u);
   } catch {}
 }
+if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => {}; // iOS에서 목소리 목록 미리 불러오기
 function listen(onResult, onError) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { toast('이 브라우저는 음성 입력을 지원하지 않아요. 직접 입력해 주세요.'); return null; }
-  const r = new SR(); r.lang = 'en-AU'; r.interimResults = false; r.continuous = false;
+  const r = new SR(); r.lang = accentLang(); r.interimResults = false; r.continuous = false;
   r.onresult = e => onResult(e.results[0][0].transcript);
   r.onerror = () => { onError && onError(); toast('마이크 권한을 확인하거나 답을 입력해 주세요.'); };
   try { r.start(); } catch { toast('마이크를 시작하지 못했어요.'); return null; }
@@ -85,7 +94,7 @@ async function addWords(items, origin = 'manual') {
 function render() {
   const app = $('#app');
   if (!state.profile) { app.innerHTML = renderOnboarding(); bindOnboarding(); return; }
-  const page = state.session ? renderSession() : ({ home: renderHome, add: renderAdd, words: renderWords, memory: renderMemory, books: renderBooks, parents: renderParents }[state.route] || renderHome)();
+  const page = state.session ? renderSession() : ({ home: renderHome, add: renderAdd, words: renderWords, memory: renderMemory, books: renderBooks, shelf: renderShelf, parents: renderParents }[state.route] || renderHome)();
   app.innerHTML = `
     <aside class="sidebar ${state.sidebar ? 'open' : ''}">
       <div class="brand">✦ Word Orbit</div>
@@ -106,7 +115,7 @@ function render() {
       <footer class="app-footer"><span>✦ wordorbit</span><span>Every word opens a little world.</span></footer>
     </main>`;
   bindCommon();
-  if (state.session) bindSession(); else ({ home: bindHome, add: bindAdd, words: bindWords, memory: bindMemory, books: bindBooks, parents: bindParents }[state.route] || bindHome)();
+  if (state.session) bindSession(); else ({ home: bindHome, add: bindAdd, words: bindWords, memory: bindMemory, books: bindBooks, shelf: bindShelf, parents: bindParents }[state.route] || bindHome)();
 }
 function bindCommon() {
   $('#menuBtn').onclick = () => { state.sidebar = !state.sidebar; render(); };
@@ -135,24 +144,28 @@ function profileForm(p) {
   return `<div class="form-grid">
     <label>이름<input id="pf-name" value="${esc(p.name || '')}" placeholder="예: Siheon"></label>
     <label>나이<input id="pf-age" type="number" min="4" max="14" value="${p.age || 8}"></label>
+    <label>학년 (호주)<select id="pf-grade">${['Prep', 'Year 1', 'Year 2', 'Year 3', 'Year 4', 'Year 5', 'Year 6'].map((g, i) => `<option value="${i}" ${(p.grade === undefined || p.grade === null || p.grade === '' ? gradeFromAge(p.age) : Number(p.grade)) === i ? 'selected' : ''}>${g}</option>`).join('')}</select></label>
     <label>영어 읽기 수준<select id="pf-level">
       <option value="beginner" ${p.level === 'beginner' ? 'selected' : ''}>기초 (짧은 문장, 그림책)</option>
       <option value="intermediate" ${!p.level || p.level === 'intermediate' ? 'selected' : ''}>중간 (쉬운 챕터북)</option>
       <option value="advanced" ${p.level === 'advanced' ? 'selected' : ''}>능숙 (챕터북 혼자 읽기)</option></select></label>
     <label>하루 목표 (분)<input id="pf-minutes" type="number" min="3" max="30" value="${p.minutes || 10}"></label>
     <label>하루 새 단어 최대<input id="pf-new" type="number" min="1" max="10" value="${p.newPerDay || 4}"></label>
+    <label>발음 (읽어주기·마이크)<select id="pf-accent">${Object.entries(ACCENTS).map(([k, v]) => `<option value="${k}" ${(p.accent || 'en-US') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
   </div>`;
 }
 function readProfileForm() {
-  return { name: $('#pf-name').value.trim() || 'Explorer', age: Number($('#pf-age').value) || 8, level: $('#pf-level').value, minutes: Number($('#pf-minutes').value) || 10, newPerDay: Number($('#pf-new').value) || 4 };
+  return { name: $('#pf-name').value.trim() || 'Explorer', age: Number($('#pf-age').value) || 8, grade: Number($('#pf-grade').value), level: $('#pf-level').value, minutes: Number($('#pf-minutes').value) || 10, newPerDay: Number($('#pf-new').value) || 4, accent: $('#pf-accent').value || 'en-US' };
 }
+function bindProfileForm() { const a = $('#pf-age'); if (a) a.onchange = () => { const g = $('#pf-grade'); if (g) g.value = String(gradeFromAge(a.value)); }; }
 function bindOnboarding() {
+  bindProfileForm();
   $('#createProfile').onclick = async () => {
     const p = { id: db.uid(), created: new Date().toISOString(), interests: [], bookReactions: {}, allowExplain: true, ...readProfileForm() };
     await db.putProfile(p); await loadProfile(p.id);
     await addWords(SAMPLE_WORDS, 'sample');
     toast(`${p.name}의 단어 우주를 만들었어요. 예시 단어 8개를 넣어두었어요.`, 'success');
-    state.route = 'home'; render();
+    state.route = 'home'; render(); window.scrollTo(0, 0);
   };
 }
 
@@ -171,7 +184,7 @@ function renderHome() {
       <a href="#add" class="btn primary">＋ 단어 추가하기</a>
     </div>
     <section class="panel hero">
-      <div class="row between"><span class="pill">● 나의 단어 우주</span><a href="#memory" class="text-link">기억 보관소 ↗</a></div>
+      <div class="row between"><span class="pill">● 나의 단어 우주</span><span><a href="#shelf" class="text-link">나의 책장 ↗</a> &nbsp; <a href="#memory" class="text-link">기억 보관소 ↗</a></span></div>
       <h2 class="hero-title">오늘 만난 단어가<br><em>오래 남는 기억으로.</em></h2>
       <p class="muted">알아보고, 떠올리고, 내 말로 설명해요.</p>
       <div class="orbit-stage">
@@ -218,14 +231,14 @@ function startSession() {
   const queue = [...s.intro.map(w => ({ id: w.id, intro: true })), ...s.review.map(w => ({ id: w.id, intro: false }))];
   state.session = { queue, index: 0, results: [], phase: 'intro', answer: '', hinted: false, feedback: null, options: null, simple: '', rec: null };
   prepareItem();
-  render();
+  render(); window.scrollTo(0, 0);
 }
 function currentWord() { return state.words.find(w => w.id === state.session.queue[state.session.index].id); }
 function prepareItem() {
   const s = state.session, item = s.queue[s.index];
   if (!item) return;
   const w = currentWord();
-  s.answer = ''; s.hinted = false; s.feedback = null; s.simple = ''; s.listening = false;
+  s.answer = ''; s.hinted = false; s.feedback = null; s.simple = ''; s.listening = false; s.spokenFor = '';
   if (item.intro || w.progress.needsSimplify) { s.phase = 'intro'; s.mode = 'meaning'; }
   else { s.phase = 'quiz'; s.mode = srs.pickMode(w.progress, { allowExplain: state.profile.allowExplain !== false }); }
   if (s.mode === 'meaning') {
@@ -250,7 +263,7 @@ function renderSession() {
         ${w.korean ? `<p class="muted">${esc(w.korean)}</p>` : ''}
         <p class="definition">${esc(s.simple || w.simpleDefinition || w.definition)}</p>
         ${w.context ? `<div class="context"><span class="eyebrow">IN YOUR STORY</span><p>${esc(w.context)}</p></div>` : ''}
-        ${w.example ? `<p class="example">${esc(w.example)}</p>` : ''}
+        ${w.example ? `<p class="example">${esc(w.example)} <button class="icon-btn" id="speakExample" aria-label="예문 읽어주기">🔊</button></p>` : ''}
         <div class="button-row">
           <button class="ghost" id="simplify" ${state.busy ? 'disabled' : ''}>✨ 더 쉽게 설명해 줘</button>
           <button class="primary" id="toQuiz">이제 떠올려 볼게요 →</button>
@@ -315,8 +328,11 @@ function bindSession() {
   if (s.index >= s.queue.length) return;
   const w = currentWord();
   const sp = $('#speakWord'); if (sp) sp.onclick = () => speak(w.word);
+  // 카드가 처음 열릴 때 한 번 자동으로 읽어주기 (뜻 설명·회상 문제는 정답을 말해버리므로 제외)
+  if (!s.feedback && !s.spokenFor && (s.phase === 'intro' || s.mode === 'meaning' || s.mode === 'spell')) { s.spokenFor = w.id + s.phase + s.mode; speak(w.word); }
   if (s.phase === 'intro') {
-    $('#toQuiz').onclick = () => { s.phase = 'quiz'; render(); };
+    const se = $('#speakExample'); if (se) se.onclick = () => speak(w.example);
+    $('#toQuiz').onclick = () => { s.phase = 'quiz'; s.spokenFor = ''; render(); };
     $('#simplify').onclick = async () => {
       if (!ai.getKey()) { toast('부모 리포트에서 Gemini API 키를 연결하면 사용할 수 있어요.'); return; }
       state.busy = true; render();
@@ -339,7 +355,7 @@ function bindSession() {
   const c = $('#check'); if (c) c.onclick = check;
   const py = $('#parentYes'); if (py) py.onclick = () => finish(true, 'Great explanation!');
   const pn = $('#parentNo'); if (pn) pn.onclick = () => finish(false, 'Let’s read the meaning once more.');
-  const n = $('#next'); if (n) n.onclick = () => { s.index += 1; prepareItem(); render(); };
+  const n = $('#next'); if (n) n.onclick = () => { s.index += 1; prepareItem(); render(); window.scrollTo(0, 0); };
 
   async function check() {
     if (!s.answer.trim()) { toast('답을 먼저 골라 주세요.'); return; }
@@ -527,6 +543,7 @@ function openWord(id) {
     <label>영어 뜻<input id="d-def" value="${esc(w.definition)}"></label>
     <label>책에서 본 문장<input id="d-ctx" value="${esc(w.context)}"></label>
     <label>예문<input id="d-ex" value="${esc(w.example)}"></label>
+    <div class="button-row"><button class="ghost small" id="d-speak-ex">🔊 예문 듣기</button>${w.context ? '<button class="ghost small" id="d-speak-ctx">🔊 책 문장 듣기</button>' : ''}</div>
     <div class="track-grid">
       <div><span>뜻 이해</span><b>${t.meaning.ok}✓ ${t.meaning.miss}✗</b></div>
       <div><span>떠올리기</span><b>${t.recall.ok}✓ ${t.recall.miss}✗</b></div>
@@ -538,6 +555,8 @@ function openWord(id) {
   dlg.hidden = false;
   $('#d-close').onclick = () => { dlg.hidden = true; };
   $('#d-speak').onclick = () => speak(w.word);
+  $('#d-speak-ex').onclick = () => speak(w.example || w.word);
+  const dc = $('#d-speak-ctx'); if (dc) dc.onclick = () => speak(w.context);
   $('#d-save').onclick = async () => { w.definition = $('#d-def').value; w.context = $('#d-ctx').value; w.example = $('#d-ex').value; await db.putWord(w); dlg.hidden = true; toast('저장했어요.', 'success'); render(); };
   $('#d-del').onclick = async () => { if (!confirm(`“${w.word}”를 삭제할까요? 학습 기록도 함께 지워져요.`)) return; await db.deleteWord(w.id); state.words = state.words.filter(x => x.id !== w.id); dlg.hidden = true; render(); };
 }
@@ -558,41 +577,167 @@ function renderMemory() {
 function bindMemory() { document.querySelectorAll('.orb-card').forEach(el => el.onclick = () => openWord(el.dataset.word)); }
 
 // ---------- 책 ----------
+const booksView = { seed: 0, band: '', topic: '', kind: '', awardOnly: false, limit: 12, showShelf: false };
+function bookCard(book, { slot, reason, burdenKey, reviewWords } = {}) {
+  const rx = state.profile.bookReactions || {};
+  const r = rx[book.title];
+  const bandIdx = childBand(state.profile);
+  const bk = burdenKey || (['easy', 'fit', 'stretch', 'together'][Math.max(0, Math.min(3, BANDS.indexOf(book.band) - bandIdx + 1))]);
+  return `<section class="panel book ${hasAward(book) ? 'award' : ''}">
+    ${slot ? `<p class="eyebrow">${slot}</p>` : ''}
+    <h2>${esc(book.title)}</h2><p class="muted">${esc(book.author)}${book.year ? ` · ${book.year}` : ''}${book.pages ? ` · ${book.pages}쪽` : ''}</p>
+    <div class="badges">
+      ${book.sources.map(src => `<span class="badge ${src.source === 'CBCA' ? 'src' : 'prc'}">${esc(badgeText(src))}</span>`).join('')}
+      <span class="badge">${BAND_LABEL[book.band]}</span><span class="badge">${KIND_LABEL[book.kind] || book.kind}</span><span class="badge burden-${bk}">${BURDEN_LABEL[bk]}</span>
+    </div>
+    ${reason ? `<p><b>우리 아이에게:</b> ${esc(reason)}</p>` : ''}
+    ${book.summary ? `<p class="muted">${esc(book.summary)}</p>` : ''}
+    ${book.themes && book.themes.length ? `<p class="muted small">주제: ${book.themes.map(esc).join(' · ')}</p>` : ''}
+    ${reviewWords && reviewWords.length ? `<p class="muted small">배운 단어와 같은 주제: ${reviewWords.join(', ')}</p>` : ''}
+    <div class="button-row">
+      <button class="${r === 'skip' ? 'primary' : 'ghost'} small" data-react="skip" data-title="${esc(book.title)}">다른 책 볼래요</button>
+      <button class="${r === 'want' ? 'primary' : 'ghost'} small" data-react="want" data-title="${esc(book.title)}">읽고 싶어요</button>
+      <button class="${r === 'liked' ? 'primary' : 'ghost'} small" data-react="liked" data-title="${esc(book.title)}">읽었어요 · 재미있었어요</button>
+      <button class="${r === 'hard' ? 'primary' : 'ghost'} small" data-react="hard" data-title="${esc(book.title)}">읽었어요 · 어려웠어요</button>
+    </div></section>`;
+}
 function renderBooks() {
   const p = state.profile;
-  const { cards, signals } = recommend(p, state.words);
-  const rx = p.bookReactions || {};
+  const { cards, signals, bandIdx } = recommend(p, state.words, booksView.seed);
+  const shelf = booksView.showShelf ? browse(p, { band: booksView.band || BANDS[bandIdx], topic: booksView.topic, kind: booksView.kind, awardOnly: booksView.awardOnly }) : [];
+  const wants = Object.entries(p.bookReactions || {}).filter(([, v]) => v === 'want').map(([t]) => t);
   return `<p class="eyebrow">THE NEXT CHAPTER</p><h1>다음에 읽을 책</h1>
-    <p class="muted">믿을 수 있는 선정 목록에서, 나의 관심사로 이어지는 이야기.</p>
+    <p class="muted">퀸즐랜드 Premier's Reading Challenge 목록과 CBCA 수상·후보작 ${STATS.total}권 중에서, ${esc(p.name)}의 학년(${BAND_LABEL[BANDS[bandIdx]]} 기준)과 관심사에 맞춰 골라요.</p>
     <section class="panel"><b>좋아하는 주제</b> <span class="muted small">(아이가 직접 고르기)</span>
       <div class="chips">${TOPICS.filter(t => t.id !== 'other').map(t => `<button class="chip ${(p.interests || []).includes(t.id) ? 'on' : ''}" data-topic="${t.id}">${t.name}</button>`).join('')}</div>
       ${signals.learning.length ? `<p class="muted small">최근 학습 주제: ${signals.learning.map(t => TOPICS.find(x => x.id === t)?.name || t).join(', ')} (보조로만 반영)</p>` : ''}
     </section>
-    ${cards.map(c => `<section class="panel book">
-      <p class="eyebrow">${c.slot}</p>
-      <h2>${esc(c.book.title)}</h2><p class="muted">${esc(c.book.author)}</p>
-      <div class="badges"><span class="badge src">${c.book.source} · ${esc(c.book.award)} · ${c.book.year}</span><span class="badge">${{ easy: '혼자 읽기', medium: '조금 도전', challenge: '함께 읽기' }[c.book.level]}</span></div>
-      ${c.reason ? `<p><b>우리 아이에게:</b> ${esc(c.reason)}</p>` : ''}
-      <p class="muted">${esc(c.book.note)}</p>
-      ${c.reviewWords.length ? `<p class="muted small">배운 단어와 같은 주제: ${c.reviewWords.join(', ')}</p>` : ''}
-      <div class="button-row">
-        <button class="ghost" data-react="skip" data-title="${esc(c.book.title)}">다른 책 볼래요</button>
-        <button class="${rx[c.book.title] === 'want' ? 'primary' : 'ghost'}" data-react="want" data-title="${esc(c.book.title)}">읽고 싶어요</button>
-        <button class="ghost" data-react="liked" data-title="${esc(c.book.title)}">읽었어요 · 재미있었어요</button>
-        <button class="ghost" data-react="hard" data-title="${esc(c.book.title)}">읽었어요 · 어려웠어요</button>
-      </div></section>`).join('')}
-    <section class="panel soft"><h3>선정 출처</h3>${Object.values(SOURCES).map(s => `<p><a href="${s.url}" target="_blank" rel="noopener">${esc(s.name)}</a> — ${esc(s.note)}</p>`).join('')}
-      <p class="muted small">이 목록은 기관이 선정한 책을 정리한 것이며, 기관이 이 앱을 인증한 것은 아니에요.</p></section>`;
+    ${cards.map(c => bookCard(c.book, { slot: c.slot, reason: c.reason, burdenKey: c.burden, reviewWords: c.reviewWords })).join('')}
+    <div class="button-row"><button class="ghost" id="reshuffle">🔄 다른 추천 보기</button><button class="ghost" id="toggleShelf">${booksView.showShelf ? '책장 닫기' : '📚 책장 둘러보기'}</button></div>
+    ${booksView.showShelf ? `<section class="panel">
+      <h3>책장 둘러보기</h3>
+      <div class="chips">${BANDS.map(b => `<button class="chip ${(booksView.band || BANDS[bandIdx]) === b ? 'on' : ''}" data-band="${b}">${BAND_LABEL[b]}</button>`).join('')}</div>
+      <div class="chips">${['', 'JF', 'F', 'NF', 'GN'].map(k => `<button class="chip ${booksView.kind === k ? 'on' : ''}" data-kind="${k}">${k ? KIND_LABEL[k] : '모든 종류'}</button>`).join('')}<button class="chip ${booksView.awardOnly ? 'on' : ''}" id="awardOnly">CBCA 수상·후보만</button></div>
+      <div class="chips">${[''].concat(TOPICS.map(t => t.id)).map(t => `<button class="chip ${booksView.topic === t ? 'on' : ''}" data-ftopic="${t}">${t ? (TOPICS.find(x => x.id === t)?.name || t) : '모든 주제'}</button>`).join('')}</div>
+      <p class="muted small">${shelf.length}권</p>
+      ${shelf.slice(0, booksView.limit).map(b => bookCard(b)).join('')}
+      ${shelf.length > booksView.limit ? `<button class="ghost big" id="moreShelf">더 보기 (${shelf.length - booksView.limit}권 남음)</button>` : ''}
+    </section>` : ''}
+    ${wants.length ? `<section class="panel soft"><h3>읽고 싶은 책 (${wants.length})</h3><p>${wants.map(esc).join(' · ')}</p><p class="muted small">도서관에서 빌릴 때 참고하세요. 읽고 나면 카드에서 "읽었어요"를 눌러주세요.</p></section>` : ''}
+    <section class="panel soft"><h3>선정 출처</h3>
+      <p><a href="https://readingchallenge.education.qld.gov.au/" target="_blank" rel="noopener">Queensland Premier's Reading Challenge</a> — 퀸즐랜드 교육부가 매년 내는 학년대별 도서 목록 (Prep–Year 9)</p>
+      <p><a href="https://cbca.org.au/awards/" target="_blank" rel="noopener">CBCA Book of the Year</a> — 호주 아동도서협의회 아동문학상 수상작·아너북·최종 후보 (2018–2026)</p>
+      <p class="muted small">이 목록은 기관이 선정한 책을 정리한 것이며, 기관이 이 앱을 인증한 것은 아니에요. 같은 학년대 안에서도 주제가 무거운 책이 있을 수 있으니 "함께 읽기" 표시가 있으면 먼저 살펴봐 주세요.</p></section>`;
 }
 function bindBooks() {
-  document.querySelectorAll('.chip').forEach(b => b.onclick = async () => {
+  document.querySelectorAll('.chip[data-topic]').forEach(b => b.onclick = async () => {
     const set = new Set(state.profile.interests || []); set.has(b.dataset.topic) ? set.delete(b.dataset.topic) : set.add(b.dataset.topic);
     await saveProfile({ interests: [...set] }); render();
   });
   document.querySelectorAll('[data-react]').forEach(b => b.onclick = async () => {
-    const rx = { ...(state.profile.bookReactions || {}) }; rx[b.dataset.title] = b.dataset.react;
-    await saveProfile({ bookReactions: rx }); toast({ skip: '다른 책을 보여드릴게요.', want: '읽고 싶은 책으로 표시했어요.', liked: '재미있었다니 기뻐요! 비슷한 책을 더 찾아볼게요.', hard: '조금 쉬운 책을 골라볼게요.' }[b.dataset.react], 'success'); render();
+    const rx = { ...(state.profile.bookReactions || {}) };
+    if (rx[b.dataset.title] === b.dataset.react) delete rx[b.dataset.title]; else rx[b.dataset.title] = b.dataset.react;
+    const log = (state.profile.readLog || []).filter(e => e.title !== b.dataset.title);
+    if (rx[b.dataset.title] === 'liked' || rx[b.dataset.title] === 'hard') {
+      const book = BOOKS_ALL.find(x => x.title === b.dataset.title);
+      log.push({ id: db.uid(), title: b.dataset.title, author: book?.author || '', band: book?.band || '', kind: book?.kind || '', date: srs.todayKey(), feeling: rx[b.dataset.title], source: 'app' });
+    }
+    await saveProfile({ bookReactions: rx, readLog: log });
+    if (rx[b.dataset.title]) toast({ skip: '다른 책을 보여드릴게요.', want: '읽고 싶은 책으로 표시했어요.', liked: '재미있었다니 기뻐요! 비슷한 책을 더 찾아볼게요.', hard: '조금 쉬운 책을 골라볼게요.' }[b.dataset.react], 'success');
+    render();
   });
+  const rs = $('#reshuffle'); if (rs) rs.onclick = () => { booksView.seed += 1; render(); window.scrollTo(0, 0); };
+  const ts = $('#toggleShelf'); if (ts) ts.onclick = () => { booksView.showShelf = !booksView.showShelf; render(); };
+  document.querySelectorAll('.chip[data-band]').forEach(b => b.onclick = () => { booksView.band = b.dataset.band; booksView.limit = 12; render(); });
+  document.querySelectorAll('.chip[data-kind]').forEach(b => b.onclick = () => { booksView.kind = b.dataset.kind; booksView.limit = 12; render(); });
+  document.querySelectorAll('.chip[data-ftopic]').forEach(b => b.onclick = () => { booksView.topic = b.dataset.ftopic; booksView.limit = 12; render(); });
+  const ao = $('#awardOnly'); if (ao) ao.onclick = () => { booksView.awardOnly = !booksView.awardOnly; render(); };
+  const ms = $('#moreShelf'); if (ms) ms.onclick = () => { booksView.limit += 12; render(); };
+}
+
+// ---------- 나의 책장 ----------
+const shelfView = { adding: false, editing: null };
+const SPINE_COLORS = ['#b9a8ff', '#a8d8b9', '#f5cf9a', '#a9cdef', '#f3b7d0', '#ffd6a5', '#c7e9b0', '#d7c5f5', '#f9c4c4', '#bde0fe'];
+function spineColor(title) { let h = 0; for (const c of title) h = (h * 31 + c.charCodeAt(0)) >>> 0; return SPINE_COLORS[h % SPINE_COLORS.length]; }
+function spineHeight(e) { const base = { 'P-1': 96, '2-3': 110, '4-5': 124, '6-7': 136 }[e.band] || 116; let h = 0; for (const c of e.title) h = (h * 7 + c.charCodeAt(0)) % 17; return base + h; }
+function monthKey(d) { return d.slice(0, 7); }
+function monthLabel(k) { const [y, m] = k.split('-'); return `${y}년 ${Number(m)}월`; }
+function renderShelf() {
+  const p = state.profile, log = (p.readLog || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+  const today = srs.todayKey();
+  const thisMonth = log.filter(e => monthKey(e.date) === monthKey(today)).length;
+  const byMonth = new Map();
+  log.forEach(e => { const k = monthKey(e.date); if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k).push(e); });
+  const months = [...byMonth.keys()].sort().reverse();
+  const newest = log.length ? log[log.length - 1].id : null;
+  const form = shelfView.adding ? `<section class="panel">
+      <h3>읽은 책 꽂기</h3>
+      <div class="form-grid">
+        <label class="wide">책 제목<input id="rl-title" placeholder="The Wild Robot" list="rl-titles"><datalist id="rl-titles">${BOOKS_ALL.slice(0, 500).map(b => `<option value="${esc(b.title)}">`).join('')}</datalist></label>
+        <label>작가<input id="rl-author" placeholder="Peter Brown"></label>
+        <label>읽은 날<input id="rl-date" type="date" value="${today}"></label>
+        <label>어땠어요?<select id="rl-feeling"><option value="liked">재미있었어요</option><option value="ok">괜찮았어요</option><option value="hard">어려웠어요</option></select></label>
+      </div>
+      <div class="button-row"><button class="ghost" id="rl-cancel">취소</button><button class="primary" id="rl-save">책장에 꽂기</button></div>
+    </section>` : '';
+  return `<p class="eyebrow">MY BOOKSHELF</p>
+    <div class="row between wrap"><div><h1>${esc(p.name)}의 책장</h1><p class="muted">읽은 책이 한 권씩 꽂혀요. 지금까지 <b>${log.length}권</b>${thisMonth ? ` · 이달 ${thisMonth}권` : ''}</p></div>
+      <div class="button-row" style="margin:0"><button class="ghost" id="rl-export" ${log.length ? '' : 'disabled'}>⬇ 엑셀로 내보내기</button><button class="primary" id="rl-add">＋ 읽은 책 꽂기</button></div></div>
+    ${form}
+    ${log.length ? months.map(k => `<section class="panel shelf-panel">
+      <div class="row between"><h3>${monthLabel(k)}</h3><span class="pill">${byMonth.get(k).length}권</span></div>
+      <div class="shelf">
+        ${byMonth.get(k).slice().reverse().map(e => `<button class="spine ${e.id === newest ? 'new' : ''}" data-log="${e.id}" style="background:${spineColor(e.title)};height:${spineHeight(e)}px;width:${e.title.length > 18 ? 42 : e.title.length > 10 ? 38 : 34}px" title="${esc(e.title)}"><span class="spine-title">${esc(e.title)}</span><span class="spine-mark">${e.feeling === 'liked' ? '★' : e.feeling === 'hard' ? '△' : '○'}</span></button>`).join('')}
+        <div class="shelf-board"></div>
+      </div></section>`).join('')
+      : `<section class="panel shelf-panel empty"><div class="shelf"><div class="shelf-board"></div></div><p class="muted center">아직 꽂힌 책이 없어요.<br>"다음에 읽을 책"에서 읽었어요를 누르거나, 위의 버튼으로 직접 꽂아 보세요.</p></section>`}
+    <p class="muted small center">★ 재미있었어요 · ○ 괜찮았어요 · △ 어려웠어요 · 책등을 누르면 자세히 볼 수 있어요</p>`;
+}
+function bindShelf() {
+  const add = $('#rl-add'); if (add) add.onclick = () => { shelfView.adding = true; render(); setTimeout(() => $('#rl-title')?.focus(), 50); };
+  const cancel = $('#rl-cancel'); if (cancel) cancel.onclick = () => { shelfView.adding = false; render(); };
+  const save = $('#rl-save'); if (save) save.onclick = async () => {
+    const title = $('#rl-title').value.trim(); if (!title) return toast('책 제목을 적어 주세요.');
+    const book = BOOKS_ALL.find(b => b.title.toLowerCase() === title.toLowerCase());
+    const feeling = $('#rl-feeling').value;
+    const log = (state.profile.readLog || []).filter(e => e.title.toLowerCase() !== title.toLowerCase());
+    log.push({ id: db.uid(), title: book?.title || title, author: $('#rl-author').value.trim() || book?.author || '', band: book?.band || '', kind: book?.kind || '', date: $('#rl-date').value || srs.todayKey(), feeling, source: book ? 'app' : 'manual' });
+    const rx = { ...(state.profile.bookReactions || {}) }; if (book && feeling !== 'ok') rx[book.title] = feeling; else if (book) rx[book.title] = 'liked';
+    await saveProfile({ readLog: log, bookReactions: rx }); shelfView.adding = false; toast('책장에 꽂았어요 📚', 'success'); render();
+  };
+  document.querySelectorAll('.spine').forEach(el => el.onclick = () => openReadLog(el.dataset.log));
+  const ex = $('#rl-export'); if (ex) ex.onclick = () => {
+    const p = state.profile, log = (p.readLog || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+    const FEEL = { liked: '재미있었어요', ok: '괜찮았어요', hard: '어려웠어요' };
+    const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const rows = [['번호', '읽은 날', '책 제목', '작가', '학년대', '종류', '어땠어요', '출처'].map(q).join(',')]
+      .concat(log.map((e, i) => [i + 1, e.date, e.title, e.author, e.band ? BAND_LABEL[e.band] : '', e.kind ? (KIND_LABEL[e.kind] || e.kind) : '', FEEL[e.feeling] || e.feeling, e.source === 'manual' ? '직접 입력' : '앱 추천 목록'].map(q).join(',')));
+    const blob = new Blob(['\ufeff' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8' }); // BOM: 엑셀에서 한글 깨짐 방지
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${p.name}-읽은책-${srs.todayKey()}.csv`; document.body.appendChild(a); a.click(); a.remove();
+    toast('엑셀에서 열 수 있는 파일로 저장했어요.', 'success');
+  };
+}
+function openReadLog(id) {
+  const e = (state.profile.readLog || []).find(x => x.id === id); if (!e) return;
+  const dlg = $('#dialog');
+  dlg.innerHTML = `<div class="dlg">
+    <div class="row between"><h2>${esc(e.title)}</h2><button class="icon-btn" id="d-close">✕</button></div>
+    <p class="muted">${esc(e.author || '')}${e.band ? ` · ${BAND_LABEL[e.band]}` : ''}${e.kind ? ` · ${KIND_LABEL[e.kind] || e.kind}` : ''}</p>
+    <label>읽은 날<input id="rl-e-date" type="date" value="${e.date}"></label>
+    <label>어땠어요?<select id="rl-e-feeling"><option value="liked" ${e.feeling === 'liked' ? 'selected' : ''}>재미있었어요</option><option value="ok" ${e.feeling === 'ok' ? 'selected' : ''}>괜찮았어요</option><option value="hard" ${e.feeling === 'hard' ? 'selected' : ''}>어려웠어요</option></select></label>
+    <div class="button-row"><button class="ghost danger" id="rl-e-del">책장에서 빼기</button><button class="primary" id="rl-e-save">저장</button></div></div>`;
+  dlg.hidden = false;
+  $('#d-close').onclick = () => { dlg.hidden = true; };
+  $('#rl-e-save').onclick = async () => {
+    e.date = $('#rl-e-date').value || e.date; e.feeling = $('#rl-e-feeling').value;
+    const rx = { ...(state.profile.bookReactions || {}) }; if (rx[e.title]) rx[e.title] = e.feeling === 'hard' ? 'hard' : 'liked';
+    await saveProfile({ readLog: state.profile.readLog, bookReactions: rx }); dlg.hidden = true; render();
+  };
+  $('#rl-e-del').onclick = async () => {
+    if (!confirm(`“${e.title}”를 책장에서 뺄까요?`)) return;
+    const rx = { ...(state.profile.bookReactions || {}) }; delete rx[e.title];
+    await saveProfile({ readLog: (state.profile.readLog || []).filter(x => x.id !== e.id), bookReactions: rx }); dlg.hidden = true; render();
+  };
 }
 
 // ---------- 부모 리포트 ----------
@@ -609,6 +754,7 @@ function renderParents() {
         <div><b>${sum.usedInSentence}</b><span>내 말로 설명한 단어</span></div>
         <div><b>${sum.activeDays}일</b><span>최근 7일 학습한 날</span></div>
         <div><b>${sum.upcoming}</b><span>앞으로 7일 복습 예정</span></div>
+        <div><b>${(p.readLog || []).length}</b><span>책장에 꽂은 책</span></div>
       </div>
       ${sum.overdue ? `<p class="info-line">밀린 복습 ${sum.overdue}개 — 앱이 하루 예산만큼만 나눠서 배치해요.</p>` : ''}
       ${sum.struggling.length ? `<p><b>자주 혼동하는 단어:</b> ${sum.struggling.map(esc).join(', ')} <span class="muted small">— 다음 학습에서 쉬운 설명부터 보여줘요.</span></p>` : ''}
@@ -641,6 +787,7 @@ function renderParents() {
     </section>`;
 }
 function bindParents() {
+  bindProfileForm();
   $('#saveProfile').onclick = async () => { await saveProfile({ ...readProfileForm(), allowExplain: $('#pf-explain').checked }); toast('저장했어요.', 'success'); render(); };
   $('#aiConnect').onclick = async () => {
     const k = $('#apikey').value.trim(); const m = $('#model').value;
@@ -676,8 +823,8 @@ function bindParents() {
 // ---------- 시작 ----------
 function router() {
   const r = location.hash.replace('#', '') || 'home';
-  state.route = ['home', 'add', 'words', 'memory', 'books', 'parents'].includes(r) ? r : 'home';
-  state.session = null; render();
+  state.route = ['home', 'add', 'words', 'memory', 'books', 'shelf', 'parents'].includes(r) ? r : 'home';
+  state.session = null; render(); window.scrollTo(0, 0);
 }
 window.addEventListener('hashchange', router);
 (async () => {
