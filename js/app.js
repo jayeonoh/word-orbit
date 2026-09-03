@@ -36,6 +36,17 @@ function toast(msg, kind = 'info') {
   setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, 3200);
 }
 const ACCENTS = { 'en-US': '미국식', 'en-GB': '영국식', 'en-AU': '호주식' };
+const FLAGS = { 'en-US': '🇺🇸', 'en-GB': '🇬🇧', 'en-AU': '🇦🇺' };
+const SPK_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5v5a1 1 0 0 0 1 1h2.6l4 3.2a.8.8 0 0 0 1.3-.6V5.9a.8.8 0 0 0-1.3-.6L7.6 8.5H5a1 1 0 0 0-1 1z" fill="currentColor" stroke="none" opacity=".9"/><path d="M16 9.2a4 4 0 0 1 0 5.6"/><path d="M18.6 6.6a7.5 7.5 0 0 1 0 10.8"/></svg>';
+// 스피커 버튼 (+ 선택: 발음 국기)
+function spk(id, { flags = false, size = '' } = {}) {
+  const cur = accentLang();
+  return `<span class="spk-wrap"><button class="spk ${size}" id="${id}" aria-label="읽어주기">${SPK_SVG}</button>${flags ? `<span class="flags">${Object.keys(FLAGS).map(k => `<button class="flag ${k === cur ? 'on' : ''}" data-accent="${k}" title="${ACCENTS[k]}">${FLAGS[k]}</button>`).join('')}</span>` : ''}</span>`;
+}
+// 한국어는 기본으로 감춤 — 눌러야 보임 (영어로 이해하는 연습이 목적)
+function ko(text, cls = '') { return text ? `<span class="ko-wrap ${cls}"><button class="ko-toggle" type="button">한국어</button><span class="ko-text" hidden>${esc(text)}</span></span>` : ''; }
+function bindKo() { document.querySelectorAll('.ko-toggle').forEach(b => b.onclick = e => { e.stopPropagation(); const t = b.nextElementSibling; t.hidden = !t.hidden; b.classList.toggle('on', !t.hidden); }); }
+function bindFlags() { document.querySelectorAll('.flag[data-accent]').forEach(b => b.onclick = async e => { e.stopPropagation(); await saveProfile({ accent: b.dataset.accent }); render(); }); }
 function accentLang() { return (state.profile && state.profile.accent) || 'en-US'; }
 function speak(text, lang) {
   try {
@@ -114,7 +125,7 @@ function render() {
       <div class="page">${page}</div>
       <footer class="app-footer"><span>✦ wordorbit · <a href="guide.html">시작 안내</a></span><span>Every word opens a little world.</span></footer>
     </main>`;
-  bindCommon();
+  bindCommon(); bindKo();
   if (state.session) bindSession(); else ({ home: bindHome, add: bindAdd, words: bindWords, memory: bindMemory, books: bindBooks, shelf: bindShelf, parents: bindParents }[state.route] || bindHome)();
 }
 function bindCommon() {
@@ -238,7 +249,7 @@ function prepareItem() {
   const s = state.session, item = s.queue[s.index];
   if (!item) return;
   const w = currentWord();
-  s.answer = ''; s.hinted = false; s.feedback = null; s.simple = ''; s.listening = false; s.spokenFor = '';
+  s.answer = ''; s.hinted = false; s.feedback = null; s.simple = ''; s.simpleKo = ''; s.listening = false; s.spokenFor = '';
   if (item.intro || w.progress.needsSimplify) { s.phase = 'intro'; s.mode = 'meaning'; }
   else { s.phase = 'quiz'; s.mode = srs.pickMode(w.progress, { allowExplain: state.profile.allowExplain !== false }); }
   if (s.mode === 'meaning') {
@@ -259,13 +270,13 @@ function renderSession() {
     return `${head}
       <section class="panel study">
         <p class="eyebrow">${w.progress.needsSimplify ? 'LET’S LOOK AGAIN' : 'NEW WORD'}</p>
-        <h1 class="word-title">${esc(w.word)} <button class="icon-btn" id="speakWord" aria-label="읽어주기">🔊</button></h1>
-        ${w.korean ? `<p class="muted">${esc(w.korean)}</p>` : ''}
-        <p class="definition">${esc(s.simple || w.simpleDefinition || w.definition)}</p>
+        <h1 class="word-title">${esc(w.word)} ${spk('speakWord', { flags: true })}</h1>
+        <p class="definition">${esc(w.definition)} ${ko(w.korean)}</p>
+        ${(s.simple || w.simpleDefinition) ? `<div class="alt-explain"><span class="eyebrow">ANOTHER WAY</span><p>${esc(s.simple || w.simpleDefinition)}</p>${ko(s.simpleKo || w.simpleKorean, 'block')}</div>` : ''}
         ${w.context ? `<div class="context"><span class="eyebrow">IN YOUR STORY</span><p>${esc(w.context)}</p></div>` : ''}
-        ${w.example ? `<p class="example">${esc(w.example)} <button class="icon-btn" id="speakExample" aria-label="예문 읽어주기">🔊</button></p>` : ''}
+        ${w.example ? `<p class="example">${esc(w.example)} ${spk('speakExample', { size: 'sm' })}</p>` : ''}
         <div class="button-row">
-          <button class="ghost" id="simplify" ${state.busy ? 'disabled' : ''}>✨ 더 쉽게 설명해 줘</button>
+          <button class="ghost" id="simplify" ${state.busy ? 'disabled' : ''}>✨ ${(s.simple || w.simpleDefinition) ? '또 다르게' : '다르게 설명해 줘'}</button>
           <button class="primary" id="toQuiz">이제 떠올려 볼게요 →</button>
         </div>
       </section>`;
@@ -273,11 +284,11 @@ function renderSession() {
   const modeLabel = srs.MODES[s.mode];
   let body = '';
   if (s.mode === 'meaning') {
-    body = `<h1 class="word-title">${esc(w.word)} <button class="icon-btn" id="speakWord">🔊</button></h1>
+    body = `<h1 class="word-title">${esc(w.word)} ${spk('speakWord', { flags: true })}</h1>
       <p class="muted">What does it mean?</p>
       <div class="options">${s.options.map((o, i) => `<button class="option ${s.answer === o ? 'chosen' : ''}" data-opt="${esc(o)}" ${s.feedback ? 'disabled' : ''}><span>${String.fromCharCode(65 + i)}</span>${esc(o)}</button>`).join('')}</div>`;
   } else if (s.mode === 'recall') {
-    body = `<p class="definition">${esc(w.definition)}</p>${w.korean ? `<p class="muted">${esc(w.korean)}</p>` : ''}
+    body = `<p class="definition">${esc(w.definition)} ${ko(w.korean)}</p>
       <p class="muted">Which word is this? Say it or type it.</p>
       <div class="free-answer">
         <input id="answer" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="type the word" value="${esc(s.answer)}" ${s.feedback ? 'disabled' : ''}>
@@ -285,15 +296,15 @@ function renderSession() {
       </div>`;
   } else if (s.mode === 'spell') {
     const pad = s.inputMode !== 'keyboard';
-    body = `<p class="definition">${esc(w.definition)}</p>${w.korean ? `<p class="muted">${esc(w.korean)}</p>` : ''}
-      <p class="muted">Listen and write the word. <button class="icon-btn" id="speakWord">🔊</button> <span class="letters">${'_ '.repeat(w.word.length)}</span></p>
+    body = `<p class="definition">${esc(w.definition)} ${ko(w.korean)}</p>
+      <p class="muted">Listen and write the word. ${spk('speakWord', { flags: true })} <span class="letters">${'_ '.repeat(w.word.length)}</span></p>
       <div class="tabs"><button class="tab ${pad ? 'active' : ''}" id="modePad" ${s.feedback ? 'disabled' : ''}>✍️ 손으로 쓰기</button><button class="tab ${pad ? '' : 'active'}" id="modeKey" ${s.feedback ? 'disabled' : ''}>⌨️ 키보드</button></div>
       ${pad && !s.feedback ? `<div class="pad-wrap"><canvas id="pad" class="pad"></canvas>
         <div class="button-row"><button class="ghost small" id="padClear">지우기</button><button class="primary small" id="padRead" ${state.busy ? 'disabled' : ''}>${state.busy ? '읽는 중…' : '다 썼어요 → 읽기'}</button></div>
         <p class="muted small">글자를 또박또박 크게, 띄어서 써주세요. 읽힌 철자는 아래 칸에서 고칠 수 있어요.</p></div>` : ''}
       <div class="free-answer"><input id="answer" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="${pad ? '읽힌 철자가 여기에 나와요' : 'write the word'}" value="${esc(s.answer)}" ${s.feedback ? 'disabled' : ''}></div>`;
   } else if (s.mode === 'explain') {
-    body = `<h1 class="word-title">${esc(w.word)} <button class="icon-btn" id="speakWord">🔊</button></h1>
+    body = `<h1 class="word-title">${esc(w.word)} ${spk('speakWord', { flags: true })}</h1>
       <p class="muted">Tell me what it means, in your own words.</p>
       <div class="free-answer">
         <textarea id="answer" rows="3" placeholder="It means…" ${s.feedback ? 'disabled' : ''}>${esc(s.answer)}</textarea>
@@ -333,6 +344,7 @@ function bindSession() {
   if (s.index >= s.queue.length) return;
   const w = currentWord();
   const sp = $('#speakWord'); if (sp) sp.onclick = () => speak(w.word);
+  bindFlags();
   // 카드가 처음 열릴 때 한 번 자동으로 읽어주기 (뜻 설명·회상 문제는 정답을 말해버리므로 제외)
   if (!s.feedback && !s.spokenFor && (s.phase === 'intro' || s.mode === 'meaning' || s.mode === 'spell')) { s.spokenFor = w.id + s.phase + s.mode; speak(w.word); }
   if (s.phase === 'intro') {
@@ -343,7 +355,7 @@ function bindSession() {
       state.busy = true; render();
       try {
         const r = await ai.simplify({ key: ai.getKey(), word: w.word, definition: w.definition, context: w.context, age: state.profile.age, level: state.profile.level });
-        s.simple = r.definition || ''; w.simpleDefinition = s.simple; await db.putWord(w);
+        s.simple = r.definition || ''; s.simpleKo = r.korean || ''; w.simpleDefinition = s.simple; w.simpleKorean = s.simpleKo; await db.putWord(w);
       } catch (err) { toast(err.message, 'error'); }
       state.busy = false; render();
     };
@@ -567,7 +579,7 @@ function renderWords() {
   const f = [['all', '전체'], ['new', '새로운 발견'], ['growing', '키우는 중'], ['mastered', '오래 기억']];
   return `<p class="eyebrow">MY WORD UNIVERSE</p><div class="row between"><h1>나의 단어 <span class="muted">${state.words.length}</span></h1><a href="#add" class="btn primary">＋ 추가</a></div>
     <div class="tabs">${f.map(([id, l]) => `<button class="tab ${wordsView.filter === id ? 'active' : ''}" data-f="${id}">${l}</button>`).join('')}</div>
-    ${list.length ? `<div class="orb-grid">${list.map((w, i) => `<div class="orb-card" data-word="${w.id}">${orb(w, i, true)}<div class="orb-card-text"><b>${esc(w.word)}</b><span class="muted">${esc(w.korean || w.definition)}</span>${w.progress.attempts ? `<small>${w.progress.mastered ? '✦ 오래 기억' : `복습 ${fmtDate(w.progress.due)}`}</small>` : ''}</div></div>`).join('')}</div>` : '<section class="panel"><p class="muted center">아직 단어가 없어요.</p></section>'}`;
+    ${list.length ? `<div class="orb-grid">${list.map((w, i) => `<div class="orb-card" data-word="${w.id}">${orb(w, i, true)}<div class="orb-card-text"><b>${esc(w.word)}</b><span class="muted">${esc(w.definition || w.korean)}</span>${w.progress.attempts ? `<small>${w.progress.mastered ? '✦ 오래 기억' : `복습 ${fmtDate(w.progress.due)}`}</small>` : ''}</div></div>`).join('')}</div>` : '<section class="panel"><p class="muted center">아직 단어가 없어요.</p></section>'}`;
 }
 function bindWords() {
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => { wordsView.filter = b.dataset.f; render(); });
@@ -580,13 +592,13 @@ function openWord(id) {
   const dlg = $('#dialog');
   dlg.innerHTML = `<div class="dlg word-dlg">
     <div class="row between">
-      <div><h2 class="word-title" style="font-size:1.7rem">${esc(w.word)} <button class="icon-btn" id="d-speak" aria-label="읽어주기">🔊</button></h2>${w.korean ? `<p class="muted" style="margin:0">${esc(w.korean)}</p>` : ''}</div>
+      <div><h2 class="word-title" style="font-size:1.7rem">${esc(w.word)} ${spk('d-speak', { flags: true })}</h2>${ko(w.korean, 'block')}</div>
       <button class="icon-btn" id="d-close" aria-label="닫기">✕</button>
     </div>
     <span class="pill">${st === 'new' ? '새로운 발견' : st === 'growing' ? '기억을 키우는 중' : '✦ 오래 기억하는 단어'}${p.attempts ? ` · 복습 ${fmtDate(p.due)}` : ''}</span>
     <label>영어 뜻<textarea id="d-def" rows="2">${esc(w.definition)}</textarea></label>
-    <label><span class="row between">책에서 본 문장 ${w.context ? '<button class="icon-btn small-icon" id="d-speak-ctx" aria-label="문장 읽어주기">🔊</button>' : ''}</span><textarea id="d-ctx" rows="3" placeholder="책에서 본 문장">${esc(w.context)}</textarea></label>
-    <label><span class="row between">예문 ${w.example ? '<button class="icon-btn small-icon" id="d-speak-ex" aria-label="예문 읽어주기">🔊</button>' : ''}</span><textarea id="d-ex" rows="2" placeholder="예문">${esc(w.example)}</textarea></label>
+    <label><span class="row between">책에서 본 문장 ${w.context ? spk('d-speak-ctx', { size: 'sm' }) : ''}</span><textarea id="d-ctx" rows="3" placeholder="책에서 본 문장">${esc(w.context)}</textarea></label>
+    <label><span class="row between">예문 ${w.example ? spk('d-speak-ex', { size: 'sm' }) : ''}</span><textarea id="d-ex" rows="2" placeholder="예문">${esc(w.example)}</textarea></label>
     ${p.attempts ? `<p class="muted small">뜻 이해 ${t.meaning.ok}✓ ${t.meaning.miss}✗ · 떠올리기 ${t.recall.ok}✓ ${t.recall.miss}✗ · 철자 ${t.spell.ok}✓ ${t.spell.miss}✗ · 설명 ${t.explain.ok}✓ ${t.explain.miss}✗ · 힌트 없이 떠올린 날 ${[...new Set(p.hintFreeDays)].length}일</p>` : ''}
     <div class="row between" style="margin-top:6px"><button class="text-link danger" id="d-del">이 단어 삭제</button><button class="primary" id="d-save">저장</button></div></div>`;
   dlg.hidden = false;
@@ -594,6 +606,7 @@ function openWord(id) {
   $('#d-close').onclick = () => { dlg.hidden = true; };
   dlg.onclick = e => { if (e.target === dlg) dlg.hidden = true; };
   $('#d-speak').onclick = () => speak(w.word);
+  bindFlags(); bindKo();
   const se = $('#d-speak-ex'); if (se) se.onclick = () => speak($('#d-ex').value || w.example);
   const sc = $('#d-speak-ctx'); if (sc) sc.onclick = () => speak($('#d-ctx').value || w.context);
   $('#d-save').onclick = async () => { w.definition = $('#d-def').value.trim(); w.context = $('#d-ctx').value.trim(); w.example = $('#d-ex').value.trim(); await db.putWord(w); dlg.hidden = true; toast('저장했어요.', 'success'); render(); };

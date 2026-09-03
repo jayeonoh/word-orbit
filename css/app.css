@@ -149,7 +149,7 @@ label input, label select { margin-top: 4px; }
   .sidebar.open { left: 0; }
   .scrim.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.3); z-index: 10; }
   .page { padding: 10px 14px 32px; }
-  .topbar { padding: 8px 14px; }
+  .topbar { padding: calc(8px + env(safe-area-inset-top, 0px)) 14px 8px; }
   .hero-title { font-size: 1.5rem; } .word-title { font-size: 1.8rem; }
   .track-grid { grid-template-columns: repeat(2, 1fr); }
 }
@@ -249,3 +249,31 @@ label input, label select { margin-top: 4px; }
 .onboard.compact-form input, .onboard.compact-form select { padding: 8px 10px; font-size: .95rem; }
 .onboard.compact-form .big { margin-top: 8px; padding: 12px; }
 .onboard.compact-form > .row a { white-space: nowrap; }
+
+/* 홈 화면 앱: 상태 표시줄(시계·배터리) 아래로 내용이 올라가지 않게 */
+#dialog { padding: calc(16px + env(safe-area-inset-top, 0px)) 22px calc(16px + env(safe-area-inset-bottom, 0px)); }
+.dlg { padding: 18px 16px; border-radius: 18px; }
+.scrim.show { top: 0; }
+.toasts, #toasts { bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+@media (max-width: 480px) { .dlg { max-height: 86vh; } }
+
+/* 스피커 버튼 + 발음 국기 */
+.spk-wrap { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
+.spk { width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--soft); color: var(--accent); display: inline-grid; place-items: center; padding: 0; cursor: pointer; box-shadow: 0 2px 6px rgba(80,60,160,.12); transition: transform .12s; }
+.spk:active { transform: scale(.92); }
+.spk.sm { width: 26px; height: 26px; box-shadow: none; } .spk.sm svg { width: 14px; height: 14px; }
+.flags { display: inline-flex; gap: 2px; background: #fff; border: 1px solid var(--line); border-radius: 999px; padding: 2px; }
+.flag { border: none; background: transparent; font-size: .95rem; line-height: 1; padding: 3px 5px; border-radius: 999px; cursor: pointer; opacity: .45; filter: grayscale(.4); }
+.flag.on { opacity: 1; filter: none; background: var(--soft); }
+
+.alt-explain { background: #fff7e8; border-radius: 14px; padding: 10px 14px; margin: 8px 0; }
+.alt-explain .eyebrow { color: var(--warn); }
+.alt-explain p { margin: 2px 0 0; }
+
+/* 한국어 감춤 토글 */
+.ko-wrap { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
+.ko-wrap.block { display: flex; margin-top: 4px; }
+.ko-toggle { border: 1px solid var(--line); background: #fff; color: var(--muted); font-size: .68rem; border-radius: 999px; padding: 2px 8px; cursor: pointer; line-height: 1.3; }
+.ko-toggle.on { background: var(--soft); color: var(--accent); border-color: var(--accent-2); }
+.ko-text { font-size: .9rem; color: var(--muted); font-weight: 400; }
+.ko-text[hidden] { display: none; }

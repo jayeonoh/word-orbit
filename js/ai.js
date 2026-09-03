@@ -174,11 +174,15 @@ export async function extractFromText({ key, model, text, age, level }) {
   return call({ key, model, parts: [{ text: `${prompt}\n${levelText(age, level)}\n${WORD_SCHEMA}\n\nTEXT:\n${text}` }] });
 }
 
-// "더 쉽게 설명해 줘"
+// "다르게 설명해 줘" — 같은 말을 반복하지 않고, 아이가 아는 것에 빗대거나 짧은 장면으로
 export async function simplify({ key, model, word, definition, context, age, level }) {
-  const prompt = `A child did not understand this definition. Explain the word "${word}" again more simply, in English, in one or two very short sentences a ${age || 7}-year-old would understand. You may compare it to something familiar. Context sentence: "${context || ''}". Current definition: "${definition}".
+  const prompt = `A ${age || 7}-year-old child read this definition of "${word}" but wants it explained a DIFFERENT way: "${definition}".
+Do NOT repeat or rephrase the definition. Instead, in one or two very short sentences, help the child feel the meaning:
+- compare it to something a child knows (a house, a bus, a puppy, a whisper…), or
+- describe a tiny scene where the word happens.
+Context sentence from their book: "${context || ''}".
 ${levelText(age, level)}
-Return JSON only: {"definition": "...", "korean": "한국어로 한 줄 설명"}`;
+Return JSON only: {"definition": "the new English explanation", "korean": "같은 내용을 아이에게 말하듯 한국어 한 줄"}`;
   return call({ key, model, parts: [{ text: prompt }] });
 }
 
