@@ -10,6 +10,8 @@
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Word Orbit">
   <link rel="stylesheet" href="css/app.css">
 </head>
@@ -23,10 +25,11 @@
       var el = document.getElementById('app');
       el.innerHTML = '<div class="onboard"><div class="brand big">✦ Word Orbit</div><h2>앱을 여는 중 문제가 생겼어요</h2><p class="info-line" style="word-break:break-all">' + String(msg).replace(/</g, '&lt;') + '</p><p class="muted small">인터넷 연결을 확인하고 앱을 완전히 닫았다가 다시 열어 보세요. 계속되면 이 화면을 캡처해서 앱을 알려준 분께 보내주세요.</p></div>';
     };
-    window.addEventListener('error', function (e) { window.__woShowError((e.message || e.type) + (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno : '')); });
-    window.addEventListener('unhandledrejection', function (e) { window.__woShowError(e.reason && e.reason.message ? e.reason.message : e.reason); });
+    // 앱이 열리기 전(부팅 중) 오류만 화면에 보여줍니다. 열린 뒤의 오류는 콘솔에만 남기고 화면은 유지합니다.
+    window.addEventListener('error', function (e) { if (window.__woBooted) { console.warn('[wo]', e.message); return; } if (e.message === 'Script error.' && !e.filename) return; window.__woShowError((e.message || e.type) + (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno : '')); });
+    window.addEventListener('unhandledrejection', function (e) { if (window.__woBooted) { console.warn('[wo]', e.reason); return; } window.__woShowError(e.reason && e.reason.message ? e.reason.message : e.reason); });
     window.__woBootTimer = setTimeout(function () { if (!window.__woBooted) window.__woShowError('10초 안에 앱이 열리지 않았어요. 인터넷이 느리거나 브라우저가 옛 파일을 들고 있을 수 있어요.'); }, 10000);
   </script>
-  <script type="module" src="js/app.js?v=7"></script>
+  <script type="module" src="js/app.js?v=8"></script>
 </body>
 </html>
