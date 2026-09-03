@@ -140,8 +140,8 @@ label input, label select { margin-top: 4px; }
 #dialog[hidden] { display: none; }
 #dialog { position: fixed; inset: 0; background: rgba(30,20,60,.35); display: grid; place-items: center; z-index: 20; padding: 16px; }
 .dlg { background: #fff; border-radius: 20px; padding: 20px; width: min(560px, 100%); max-height: 90vh; overflow: auto; display: grid; gap: 8px; }
-#toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 30; width: min(480px, 92vw); }
-.toast { background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 12px; opacity: 0; transform: translateY(8px); transition: .25s; font-size: .92rem; }
+#toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 30; width: max-content; max-width: 86vw; pointer-events: none; }
+.toast { background: var(--ink); color: #fff; padding: 9px 14px; border-radius: 12px; opacity: 0; transform: translateY(8px); transition: .25s; font-size: .88rem; max-width: 86vw; text-align: center; line-height: 1.4; }
 .toast.show { opacity: 1; transform: none; } .toast.success { background: var(--ok); } .toast.error { background: var(--danger); }
 
 @media (max-width: 760px) {
@@ -277,3 +277,6 @@ label input, label select { margin-top: 4px; }
 .ko-toggle.on { background: var(--soft); color: var(--accent); border-color: var(--accent-2); }
 .ko-text { font-size: .9rem; color: var(--muted); font-weight: 400; }
 .ko-text[hidden] { display: none; }
+
+/* iOS: 입력칸 탭 시 화면 확대 방지 (16px 미만이면 확대됨) */
+@media (max-width: 760px) { input, select, textarea { font-size: 16px; } .onboard.compact-form input, .onboard.compact-form select { font-size: 16px; } .free-answer input { font-size: 1.25rem; } }

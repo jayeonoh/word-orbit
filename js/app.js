@@ -451,7 +451,8 @@ function renderAdd() {
     ${key ? '' : '<p class="info-line">사진 읽기는 부모 리포트에서 Gemini API 키(무료)를 연결한 뒤 사용할 수 있어요. 지금은 직접 입력으로 추가할 수 있어요.</p>'}
     <div class="photo-box">${add.preview ? `<img src="${add.preview}" alt="">` : '<span>사진을 고르거나 찍어 주세요</span>'}</div>
     <div class="button-row">
-      <label class="btn ghost">사진 선택 <input type="file" id="photo" accept="image/*" capture="environment" hidden></label>
+      <label class="btn ghost">📷 카메라로 찍기 <input type="file" id="photoCam" accept="image/*" capture="environment" hidden></label>
+      <label class="btn ghost">🖼 사진첩에서 고르기 <input type="file" id="photo" accept="image/*" hidden></label>
       <button class="primary" id="extract" ${!add.image || state.busy || !key ? 'disabled' : ''}>${state.busy ? '읽는 중…' : '✨ 표시한 단어 찾기'}</button>
       <button class="ghost" id="extractPage" ${!add.image || state.busy || !key ? 'disabled' : ''}>📖 페이지 글 가져와서 탭하기</button>
       <button class="ghost" id="extractPoint" ${!add.image || state.busy || !key ? 'disabled' : ''}>☝ 손가락으로 가리킨 단어</button>
@@ -500,11 +501,13 @@ function renderAdd() {
 }
 function bindAdd() {
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => { add.tab = b.dataset.tab; render(); });
-  const ph = $('#photo'); if (ph) ph.onchange = async e => {
+  const onPhoto = async e => {
     const f = e.target.files[0]; if (!f) return;
     if (f.size > 2e7) { toast('20MB 이하의 사진을 선택해 주세요.', 'error'); return; }
     try { const r = await ai.fileToBase64(f); add.image = r; add.imageFile = f; add.preview = r.preview; add.found = []; add.sentences = []; add.picked = new Set(); render(); } catch (err) { toast(err.message, 'error'); }
   };
+  const ph = $('#photo'); if (ph) ph.onchange = onPhoto;
+  const pc = $('#photoCam'); if (pc) pc.onchange = onPhoto;
   const imgOpts = () => ({ key: ai.getKey(), imageBase64: add.image.base64, mime: add.image.mime, age: state.profile.age, level: state.profile.level });
   const setProgress = m => { state.progress = m; const el = document.getElementById('aiProgress'); if (el) el.textContent = m; };
   // 본문 읽기: 기기 안 OCR(무료·빠름) → 실패하면 AI로
