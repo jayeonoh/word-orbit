@@ -238,3 +238,14 @@ label input, label select { margin-top: 4px; }
 .hero-links { display: flex; gap: 6px; margin-left: auto; }
 .hero-links a { font-size: .74rem; color: var(--muted); background: rgba(255,255,255,.7); border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
 .hero-links a:hover { color: var(--accent); border-color: var(--accent-2); }
+
+/* 온보딩 한 화면에 들어오게 */
+.onboard.compact-form { padding-bottom: 20px; }
+.onboard.compact-form h1 { font-size: 1.35rem; margin: 6px 0 2px; }
+.onboard.compact-form .brand.big { font-size: 1.15rem; margin: 0; }
+.onboard.compact-form .form-grid { grid-template-columns: 1fr 1fr; gap: 8px 10px; margin: 8px 0; }
+.onboard.compact-form .form-grid label { font-size: .78rem; }
+.onboard.compact-form .form-grid label:first-child { grid-column: 1 / -1; }
+.onboard.compact-form input, .onboard.compact-form select { padding: 8px 10px; font-size: .95rem; }
+.onboard.compact-form .big { margin-top: 8px; padding: 12px; }
+.onboard.compact-form > .row a { white-space: nowrap; }

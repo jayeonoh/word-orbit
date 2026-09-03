@@ -132,10 +132,10 @@ function orb(word, i, small = false) {
 
 // ---------- 온보딩 ----------
 function renderOnboarding() {
-  return `<div class="onboard">
-    <div class="brand big">✦ Word Orbit</div>
-    <h1>책에서 만난 단어가<br>오래 남는 기억으로.</h1>
-    <p class="muted">서버 없이 이 기기 안에서만 동작해요. 먼저 아이 프로필을 만들어 주세요. <a href="guide.html">처음이세요? 시작 안내 →</a></p>
+  return `<div class="onboard compact-form">
+    <div class="row between"><div class="brand big">✦ Word Orbit</div><a href="guide.html" class="muted small">시작 안내 →</a></div>
+    <h1>아이 프로필 만들기</h1>
+    <p class="muted small">모든 기록은 이 기기 안에만 저장돼요. 나중에 부모 리포트에서 바꿀 수 있어요.</p>
     ${profileForm({})}
     <button class="primary big" id="createProfile">시작하기</button>
   </div>`;
@@ -144,7 +144,7 @@ function profileForm(p) {
   return `<div class="form-grid">
     <label>이름<input id="pf-name" value="${esc(p.name || '')}" placeholder="예: Siheon"></label>
     <label>나이<input id="pf-age" type="number" min="4" max="14" value="${p.age || 8}"></label>
-    <label>학년 (호주)<select id="pf-grade">${['Prep', 'Year 1', 'Year 2', 'Year 3', 'Year 4', 'Year 5', 'Year 6'].map((g, i) => `<option value="${i}" ${(p.grade === undefined || p.grade === null || p.grade === '' ? gradeFromAge(p.age) : Number(p.grade)) === i ? 'selected' : ''}>${g}</option>`).join('')}</select></label>
+    <label>학년<select id="pf-grade">${['Prep', 'Year 1', 'Year 2', 'Year 3', 'Year 4', 'Year 5', 'Year 6'].map((g, i) => `<option value="${i}" ${(p.grade === undefined || p.grade === null || p.grade === '' ? gradeFromAge(p.age) : Number(p.grade)) === i ? 'selected' : ''}>${g}</option>`).join('')}</select></label>
     <label>영어 읽기 수준<select id="pf-level">
       <option value="beginner" ${p.level === 'beginner' ? 'selected' : ''}>기초 (짧은 문장, 그림책)</option>
       <option value="intermediate" ${!p.level || p.level === 'intermediate' ? 'selected' : ''}>중간 (쉬운 챕터북)</option>
