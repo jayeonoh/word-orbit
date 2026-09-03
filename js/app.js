@@ -293,7 +293,7 @@ function renderSession() {
       <p class="muted">Which word is this? Say it or type it.</p>
       <div class="free-answer">
         <input id="answer" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="type the word" value="${esc(s.answer)}" ${s.feedback ? 'disabled' : ''}>
-        <button class="ghost" id="mic" ${s.feedback ? 'disabled' : ''}>${s.listening ? '● 듣는 중… 누르면 멈춰요' : '🎤 마이크로 말하기'}</button>
+        ${state.profile.useMic === false ? '' : `<button class="ghost" id="mic" ${s.feedback ? 'disabled' : ''}>${s.listening ? '● 듣는 중… 누르면 멈춰요' : '🎤 마이크로 말하기'}</button>`}
       </div>`;
   } else if (s.mode === 'spell') {
     const pad = s.inputMode !== 'keyboard';
@@ -309,7 +309,7 @@ function renderSession() {
       <p class="muted">Tell me what it means, in your own words.</p>
       <div class="free-answer">
         <textarea id="answer" rows="3" placeholder="It means…" ${s.feedback ? 'disabled' : ''}>${esc(s.answer)}</textarea>
-        <button class="ghost" id="mic" ${s.feedback ? 'disabled' : ''}>${s.listening ? '● 듣는 중… 누르면 멈춰요' : '🎤 마이크로 말하기'}</button>
+        ${state.profile.useMic === false ? '' : `<button class="ghost" id="mic" ${s.feedback ? 'disabled' : ''}>${s.listening ? '● 듣는 중… 누르면 멈춰요' : '🎤 마이크로 말하기'}</button>`}
       </div>
       ${ai.getKey() ? '' : '<p class="info-line">AI가 연결되지 않아 부모님이 확인해 주세요.</p>'}`;
   }
@@ -342,9 +342,14 @@ function renderSessionEnd() {
 function extraRoundItems() {
   const s = state.session; if (!s) return [];
   const doneIds = new Set(s.queue.map(q => q.id));
-  const fresh = state.words.filter(w => w.progress.attempts === 0 && !doneIds.has(w.id)).slice(0, state.profile.newPerDay || 4).map(w => ({ id: w.id, intro: true }));
-  const again = s.results.filter(r => r.correct).map(r => r.wordId).filter(id => !fresh.some(f => f.id === id)).slice(0, 6).map(id => ({ id, intro: false, practice: true }));
-  return [...fresh, ...again];
+  const today = srs.todayKey();
+  // 새 단어는 절반만, 나머지는 기존 단어: 오늘 한 단어 + 곧 복습할 단어 + 아직 자라는 중인 단어
+  const fresh = state.words.filter(w => w.progress.attempts === 0 && !doneIds.has(w.id)).slice(0, Math.max(1, Math.ceil((state.profile.newPerDay || 4) / 2))).map(w => ({ id: w.id, intro: true }));
+  const todayIds = s.results.filter(r => r.correct).map(r => r.wordId);
+  const upcoming = state.words.filter(w => w.progress.attempts > 0 && !w.progress.mastered && !doneIds.has(w.id) && !todayIds.includes(w.id))
+    .sort((a, b) => a.progress.due.localeCompare(b.progress.due)).slice(0, 6).map(w => w.id);
+  const existing = [...new Set([...upcoming, ...todayIds])].slice(0, 8).map(id => ({ id, intro: false, practice: true }));
+  return shuffle([...fresh, ...existing]);
 }
 function bindSession() {
   const s = state.session;
@@ -862,10 +867,12 @@ function renderParents() {
     <section class="panel">
       <h3>아이 설정</h3>${profileForm(p)}
       <label class="chk"><input type="checkbox" id="pf-explain" ${p.allowExplain !== false ? 'checked' : ''}> '뜻 설명하기' 문제 포함 (AI 미연결 시 부모가 확인)</label>
+      <label class="chk"><input type="checkbox" id="pf-mic" ${p.useMic !== false ? 'checked' : ''}> 마이크로 말하기 버튼 보이기</label>
+      <p class="muted small" id="micStatus">마이크 권한 상태 확인 중…</p>
       <div class="button-row"><button class="primary" id="saveProfile">저장</button></div>
     </section>
     <section class="panel">
-      <div class="row between"><h3>AI 연결 (Google Gemini 무료 티어)</h3><span class="pill">${key && ai.getModel() ? `● 연결됨 · ${esc(ai.getModel())}` : '○ 연결 대기'}</span></div>
+      <div class="row between wrap"><h3>AI 연결 <span class="muted small">(Google Gemini 무료)</span></h3><span class="pill">${key && ai.getModel() ? `● 연결됨 · ${esc(ai.getModel())}` : '○ 연결 대기'}</span></div>
       <p class="muted">사진 속 표시 단어 읽기, 더 쉬운 설명, 뜻 설명 채점에만 사용해요. 복습 일정과 퀴즈는 AI 없이 동작해요.</p>
       <p class="muted small">키는 이 기기 브라우저에만 저장되고, 사진과 답변은 평가할 때 Google로 전송돼요. 원본 사진은 저장하지 않아요. 무료 키 발급: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> · <a href="guide.html#key">발급 방법 안내</a></p>
       <div class="form-grid">
@@ -873,6 +880,7 @@ function renderParents() {
         <label>모델 <span class="muted small">(연결 확인 시 자동 선택)</span><select id="model"><option value="">자동</option>${ai.getModelList().map(m => `<option ${ai.getModel() === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
       </div>
       <div class="button-row"><button class="ghost" id="aiDisconnect" ${key ? '' : 'disabled'}>연결 해제</button><button class="primary" id="aiConnect" ${state.busy ? 'disabled' : ''}>${state.busy ? '확인 중…' : '연결 확인'}</button></div>
+      ${key ? renderUsage() : ''}
     </section>
     <section class="panel">
       <h3>지인에게 알려주기</h3>
@@ -890,9 +898,33 @@ function renderParents() {
       </div>
     </section>`;
 }
+function renderUsage() {
+  const used = ai.usageToday(); const models = [...new Set([ai.getModel(), ...Object.keys(used)])].filter(Boolean);
+  const exhausted = ai.exhaustedToday();
+  if (!models.length) return '';
+  return `<div class="usage">
+    <div class="row between"><b>오늘 무료 사용량 (추정)</b><span class="muted small">브리즈번 ${ai.resetHour()}시쯤 새로 시작</span></div>
+    ${models.map(m => { const u = used[m] || 0, lim = ai.dailyLimit(m), pct = Math.min(100, Math.round(u / lim * 100)); const ex = exhausted.has(m);
+      return `<div class="usage-row"><span class="usage-name">${esc(m)}${m === ai.getModel() ? ' <small>(사용 중)</small>' : ''}</span>
+        <div class="bar"><div class="fill ${ex || pct >= 90 ? 'hot' : pct >= 60 ? 'warm' : ''}" style="width:${ex ? 100 : pct}%"></div></div>
+        <span class="usage-num">${ex ? '한도 끝' : `${u} / <input class="lim" data-model="${esc(m)}" value="${lim}" inputmode="numeric">`}</span></div>`; }).join('')}
+    <p class="muted small">구글이 남은 양을 알려주지 않아서 앱이 보낸 요청 수를 센 값이에요. 한도 숫자는 <a href="https://aistudio.google.com/rate-limit" target="_blank" rel="noopener">aistudio.google.com/rate-limit</a>에서 본 "요청/일(RPD)"로 고쳐 넣으면 정확해져요.</p>
+  </div>`;
+}
 function bindParents() {
+  document.querySelectorAll('.lim').forEach(i => i.onchange = () => { const n = Number(i.value); if (n > 0) { ai.setDailyLimit(i.dataset.model, n); toast('한도 숫자를 저장했어요.', 'success'); render(); } });
   bindProfileForm();
-  $('#saveProfile').onclick = async () => { await saveProfile({ ...readProfileForm(), allowExplain: $('#pf-explain').checked }); toast('저장했어요.', 'success'); render(); };
+  $('#saveProfile').onclick = async () => { await saveProfile({ ...readProfileForm(), allowExplain: $('#pf-explain').checked, useMic: $('#pf-mic').checked }); toast('저장했어요.', 'success'); render(); };
+  (async () => {
+    const el = $('#micStatus'); if (!el) return;
+    const standalone = window.navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+    const how = standalone ? '홈 화면 앱은 iPhone 설정 → 앱 → Safari → 마이크(또는 설정 → Safari → 마이크)에서 이 사이트를 "허용"으로 바꿔요.' : 'Safari 주소창 왼쪽 "가가" 버튼 → 웹사이트 설정 → 마이크에서 바꿀 수 있어요.';
+    try {
+      const st = await navigator.permissions.query({ name: 'microphone' });
+      const label = { granted: '허용됨 ✅', denied: '차단됨 🚫', prompt: '아직 안 물어봤어요 (처음 누를 때 물어봐요)' }[st.state] || st.state;
+      el.textContent = `마이크 권한: ${label}. ${st.state === 'denied' ? how : '바꾸려면: ' + how}`;
+    } catch { el.textContent = `마이크 권한은 기기 설정에서 바꿔요. ${how}`; }
+  })();
   $('#aiConnect').onclick = async () => {
     const k = $('#apikey').value.trim(); const m = $('#model').value;
     if (!k) return toast('API 키를 입력해 주세요.');

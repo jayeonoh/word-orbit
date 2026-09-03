@@ -26,32 +26,63 @@ export async function listModels(key) {
   return names;
 }
 
-// 무료 티어에 알맞은 모델 고르기: flash 계열 중 가장 최신, lite/preview는 뒤로
+// 무료 티어에 알맞은 모델 고르기: 하루 한도가 넉넉한 flash-lite 계열 우선, 그다음 flash. 최신일수록 무료 한도가 적어서 '최신'보다 '넉넉함'을 우선
 export function rankModels(names, preferred = '') {
   const ver = n => parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [0, 0])[1]) || 0;
-  const score = n => ver(n) * 100 + (/flash/.test(n) ? 20 : 0) - (/lite/.test(n) ? 5 : 0) - (/preview|exp|-\d{2,}$/.test(n) ? 10 : 0) - (/pro/.test(n) ? 8 : 0);
-  const sorted = names.slice().sort((a, b) => score(b) - score(a));
-  if (preferred && sorted.includes(preferred)) return [preferred, ...sorted.filter(n => n !== preferred)];
+  const score = n => (/lite/.test(n) ? 300 : /flash/.test(n) ? 200 : 0) + ver(n) * 10 - (/preview|exp|-\d{2,}$/.test(n) ? 50 : 0) - (/pro/.test(n) ? 100 : 0) - (/tts|image|audio|live/.test(n) ? 500 : 0);
+  const exhausted = exhaustedToday();
+  const sorted = names.slice().sort((a, b) => score(b) - score(a)).sort((a, b) => (exhausted.has(a) ? 1 : 0) - (exhausted.has(b) ? 1 : 0));
+  if (preferred && sorted.includes(preferred) && !exhausted.has(preferred)) return [preferred, ...sorted.filter(n => n !== preferred)];
   return sorted;
+}
+
+// 오늘 하루 한도를 다 쓴 모델 기억 (구글 기준 하루는 미국 태평양시 자정에 바뀜 → 브리즈번 오후 5~6시)
+function quotaDayKey() { const d = new Date(Date.now() - 7 * 3600 * 1000); return d.toISOString().slice(0, 10); } // 대략 PT 기준 날짜
+export function exhaustedToday() {
+  try { const o = JSON.parse(localStorage.getItem('wo.exhausted') || '{}'); return new Set(o.day === quotaDayKey() ? o.models : []); } catch { return new Set(); }
+}
+// 오늘 보낸 요청 수 (모델별) — 남은 무료 한도의 '대략' 게이지용. 구글은 남은 양을 알려주지 않으므로 앱이 직접 셈
+export function usageToday() {
+  try { const o = JSON.parse(localStorage.getItem('wo.usage') || '{}'); return o.day === quotaDayKey() ? (o.counts || {}) : {}; } catch { return {}; }
+}
+function bumpUsage(model) {
+  try { const c = usageToday(); c[model] = (c[model] || 0) + 1; localStorage.setItem('wo.usage', JSON.stringify({ day: quotaDayKey(), counts: c })); } catch {}
+}
+// 하루 한도 추정치 (사용자가 aistudio.google.com/rate-limit 에서 본 값으로 바꿀 수 있음)
+export function dailyLimit(model) {
+  try { const o = JSON.parse(localStorage.getItem('wo.limits') || '{}'); if (o[model]) return o[model]; } catch {}
+  return /lite/.test(model) ? 1000 : /flash/.test(model) ? 250 : 50;
+}
+export function setDailyLimit(model, n) { try { const o = JSON.parse(localStorage.getItem('wo.limits') || '{}'); o[model] = n; localStorage.setItem('wo.limits', JSON.stringify(o)); } catch {} }
+export function resetHour() { // 구글 하루 기준(태평양시 자정)을 브리즈번 시각으로: 대략 17시(미국 서머타임) / 18시
+  const m = new Date().getMonth() + 1; return (m >= 3 && m <= 10) ? 17 : 18;
+}
+function markExhausted(model) {
+  try { const cur = exhaustedToday(); cur.add(model); localStorage.setItem('wo.exhausted', JSON.stringify({ day: quotaDayKey(), models: [...cur] })); } catch {}
 }
 export function pickModel(names, preferred = '') { return rankModels(names, preferred)[0] || ''; }
 
 // 붐빔(503/429 high demand) 시 다음 후보 모델로 자동 재시도
-function isBusy(status, msg) { return status === 503 || /high demand|overloaded|try again later|resource exhausted/i.test(msg || ''); }
+function isBusy(status, msg) { return status === 503 || /high demand|overloaded|try again later/i.test(msg || ''); }
 
 async function call({ key, model, parts, json = true, temperature = 0.3 }) {
   if (!key) throw new Error('Gemini API 키를 먼저 설정해 주세요. (부모 리포트)');
   model = model || getModel();
   if (!model) throw new Error('먼저 부모 리포트에서 "연결 확인"을 눌러 모델을 정해 주세요.');
-  // 후보: 선택 모델 + flash 계열 2개 (pro 계열은 느려서 자동 후보에서 제외)
+  // 후보: flash/lite 계열 최대 5개 (pro 계열은 느리고 한도가 적어 제외). 한도 초과·붐빔이면 다음 모델로
   const ranked = rankModels(getModelList(), model).filter(n => n === model || (/flash/.test(n) && !/pro/.test(n)));
-  const candidates = ranked.slice(0, 3);
+  const candidates = ranked.slice(0, 5);
   if (!candidates.length) candidates.push(model);
   let lastErr = null;
   for (const m of candidates) {
-    try { onProgress(`${m} 로 요청 중…`); return await callOnce({ key, model: m, parts, json, temperature }); }
-    catch (err) { lastErr = err; if (!err.busy) throw err; onProgress(`${m} 붐빔 → 다음 모델로`); }
+    try { onProgress(`${m} 로 요청 중…`); bumpUsage(m); const r = await callOnce({ key, model: m, parts, json, temperature }); if (m !== getModel()) setModel(m); return r; }
+    catch (err) {
+      lastErr = err;
+      if (err.quota) { markExhausted(m); onProgress(`${m} 오늘 한도 끝 → 다음 모델로`); continue; }
+      if (!err.busy) throw err; onProgress(`${m} 붐빔 → 다음 모델로`);
+    }
   }
+  if (lastErr && lastErr.quota) throw new Error('오늘 쓸 수 있는 무료 모델의 한도를 모두 썼어요. 브리즈번 시간 오후 5~6시쯤 새로 시작돼요.');
   throw new Error((lastErr && lastErr.message) || '잠시 후 다시 시도해 주세요.');
 }
 
@@ -81,8 +112,8 @@ async function callOnce({ key, model, parts, json, temperature }) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = data?.error?.message || `요청 실패 (${res.status})`;
-    if (isBusy(res.status, msg)) { const e = new Error(`AI가 지금 붐벼요 (${model}). 잠시 후 다시 시도해 주세요.`); e.busy = true; throw e; }
-    if (res.status === 429) throw new Error('오늘의 무료 사용량을 넘었거나 요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.');
+    if (res.status === 429 && /per day|daily|quota|exhausted|RPD|PerDay/i.test(msg)) { const e = new Error(`오늘 무료 한도를 다 썼어요 (${model}).`); e.quota = true; throw e; }
+    if (isBusy(res.status, msg) || res.status === 429) { const e = new Error(`AI가 지금 붐벼요 (${model}). 잠시 후 다시 시도해 주세요.`); e.busy = true; throw e; }
     if (res.status === 404) throw new Error('모델 이름이 더 이상 유효하지 않아요. 부모 리포트에서 "연결 확인"을 다시 눌러 주세요.');
     if (res.status === 400 || res.status === 403) throw new Error('API 키를 확인해 주세요. ' + msg);
     throw new Error(msg);

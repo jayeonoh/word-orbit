@@ -299,3 +299,12 @@ label input, label select { margin-top: 4px; }
 .tap-panel .tapword { padding: 3px 5px; border-radius: 8px; }
 .sticky-bar { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; margin: 10px -20px 0; padding-left: 20px; padding-right: 20px; background: rgba(255,255,255,.96); border-top: 1px solid var(--line); }
 @media (max-width: 480px) { .steps .step { font-size: .7rem; padding: 6px 8px; } .steps .step:not(.on) { flex: 0 0 auto; } .steps .step:not(.on) { font-size: 0; gap: 0; } .steps .step:not(.on) span { font-size: .72rem; } .big-choices { grid-template-columns: 1fr 1fr; } }
+
+/* 사용량 게이지 */
+.usage { margin-top: 12px; background: var(--soft); border-radius: 14px; padding: 12px 14px; }
+.usage-row { display: grid; grid-template-columns: minmax(0, 1.2fr) 2fr auto; gap: 10px; align-items: center; margin: 8px 0; font-size: .85rem; }
+.usage-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .usage-name small { color: var(--muted); }
+.bar { height: 10px; background: #fff; border-radius: 999px; overflow: hidden; border: 1px solid var(--line); }
+.bar .fill { height: 100%; background: var(--ok); border-radius: 999px; transition: width .3s; } .bar .fill.warm { background: var(--warn); } .bar .fill.hot { background: var(--danger); }
+.usage-num { white-space: nowrap; color: var(--muted); } .usage-num .lim { width: 64px; padding: 2px 6px; font-size: .8rem; display: inline-block; text-align: right; }
+@media (max-width: 480px) { .usage-row { grid-template-columns: 1fr; gap: 4px; } }
