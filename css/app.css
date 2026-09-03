@@ -5,6 +5,7 @@
   --radius: 18px; --shadow: 0 8px 30px rgba(80, 60, 160, .08);
 }
 * { box-sizing: border-box; }
+html { background: var(--bg); }
 html, body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
 a { color: var(--accent); text-decoration: none; }
 h1 { font-size: 1.7rem; margin: .1em 0 .2em; letter-spacing: -.01em; }
@@ -152,8 +153,8 @@ label input, label select { margin-top: 4px; }
   .track-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 480px) {
-  .page > .row.between { flex-direction: column; align-items: flex-start; }
-  .page > .row.between .btn { align-self: stretch; justify-content: center; }
+  .page > .row.between:not(.compact) { flex-direction: column; align-items: flex-start; }
+  .page > .row.between:not(.compact) .btn { align-self: stretch; justify-content: center; }
   .mission-grid { grid-template-columns: 1fr; }
 }
 
@@ -192,3 +193,34 @@ label input, label select { margin-top: 4px; }
 .icon-btn:disabled { opacity: .25; }
 #rl-prev, #rl-next { font-size: 1.6rem; line-height: 1; }
 .orb-wrap.small .orb-label { display: none; }
+
+/* 좁은 화면: 궤도 배치 대신 구슬을 가지런히 (기기 폭에 맞춰 자동 줄바꿈) */
+@media (max-width: 600px) {
+  .orbit-stage { height: auto; min-height: 0; display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-end; gap: 14px 18px; padding: 8px 0 4px; }
+  .orbit-stage .ring { display: none; }
+  .orbit-stage .orbit-pos { position: static; transform: none; }
+  .orbit-stage .orb { width: 56px; height: 56px; }
+  .orbit-stage.small .orb { width: 48px; height: 48px; }
+  .orb-label { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stage-counts { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .stage-counts div { padding: 8px 4px; } .stage-counts b { font-size: 1.1rem; } .stage-counts span { font-size: .7rem; }
+}
+.pill { white-space: nowrap; }
+@media (max-width: 480px) { .panel.hero > .row.between { flex-direction: column; align-items: flex-start; gap: 6px; } .panel.hero > .row.between .text-link { font-size: .85rem; } }
+
+/* 홈 화면 앱(standalone)에서 상태 표시줄 아래로 배경이 이어지도록 */
+.sidebar { padding-top: calc(20px + env(safe-area-inset-top, 0px)); }
+.onboard { padding-top: calc(24px + env(safe-area-inset-top, 0px)); }
+
+/* 단어 상세 */
+.word-dlg { gap: 10px; }
+.word-dlg textarea { resize: none; overflow: hidden; line-height: 1.5; font-size: 1rem; }
+.word-dlg label { font-size: .8rem; }
+.word-dlg label > .row { margin-bottom: 2px; }
+.icon-btn.small-icon { font-size: .95rem; padding: 0 4px; }
+.text-link.danger { color: var(--danger); font-size: .9rem; }
+.dlg .pill { justify-self: start; align-self: start; }
+
+/* 손글씨 패드 */
+.pad-wrap { margin: 8px 0; }
+.pad { width: 100%; height: 170px; background: #fff; border: 2px solid var(--line); border-radius: 14px; touch-action: none; display: block; cursor: crosshair; }

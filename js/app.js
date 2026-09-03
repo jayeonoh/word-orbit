@@ -4,7 +4,7 @@ import * as srs from './srs.js?v=7';
 import * as ai from './ai.js?v=7';
 import { SAMPLE_WORDS, TOPICS } from './data.js?v=7';
 import { recommend, browse, BANDS, BAND_LABEL, KIND_LABEL, BURDEN_LABEL, badgeText, hasAward, childBand, gradeFromAge, STATS, BOOKS as BOOKS_ALL } from './books.js?v=7';
-import { pageSentences } from './ocr.js?v=7';
+import { pageSentences, readWordImage } from './ocr.js?v=7';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -254,7 +254,7 @@ function renderSession() {
   const s = state.session;
   if (s.index >= s.queue.length) return renderSessionEnd();
   const w = currentWord(), p = state.profile;
-  const head = `<div class="row between"><span class="pill">${s.index + 1} / ${s.queue.length}</span><button class="ghost small" id="quitSession">그만하기</button></div>`;
+  const head = `<div class="row between compact"><span class="pill">${s.index + 1} / ${s.queue.length}</span><button class="ghost small" id="quitSession">그만하기</button></div>`;
   if (s.phase === 'intro') {
     return `${head}
       <section class="panel study">
@@ -284,9 +284,14 @@ function renderSession() {
         <button class="ghost" id="mic" ${s.feedback ? 'disabled' : ''}>${s.listening ? '● 듣는 중… 누르면 멈춰요' : '🎤 마이크로 말하기'}</button>
       </div>`;
   } else if (s.mode === 'spell') {
+    const pad = s.inputMode !== 'keyboard';
     body = `<p class="definition">${esc(w.definition)}</p>${w.korean ? `<p class="muted">${esc(w.korean)}</p>` : ''}
       <p class="muted">Listen and write the word. <button class="icon-btn" id="speakWord">🔊</button> <span class="letters">${'_ '.repeat(w.word.length)}</span></p>
-      <div class="free-answer"><input id="answer" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="write the word" value="${esc(s.answer)}" ${s.feedback ? 'disabled' : ''}></div>`;
+      <div class="tabs"><button class="tab ${pad ? 'active' : ''}" id="modePad" ${s.feedback ? 'disabled' : ''}>✍️ 손으로 쓰기</button><button class="tab ${pad ? '' : 'active'}" id="modeKey" ${s.feedback ? 'disabled' : ''}>⌨️ 키보드</button></div>
+      ${pad && !s.feedback ? `<div class="pad-wrap"><canvas id="pad" class="pad"></canvas>
+        <div class="button-row"><button class="ghost small" id="padClear">지우기</button><button class="primary small" id="padRead" ${state.busy ? 'disabled' : ''}>${state.busy ? '읽는 중…' : '다 썼어요 → 읽기'}</button></div>
+        <p class="muted small">글자를 또박또박 크게, 띄어서 써주세요. 읽힌 철자는 아래 칸에서 고칠 수 있어요.</p></div>` : ''}
+      <div class="free-answer"><input id="answer" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="${pad ? '읽힌 철자가 여기에 나와요' : 'write the word'}" value="${esc(s.answer)}" ${s.feedback ? 'disabled' : ''}></div>`;
   } else if (s.mode === 'explain') {
     body = `<h1 class="word-title">${esc(w.word)} <button class="icon-btn" id="speakWord">🔊</button></h1>
       <p class="muted">Tell me what it means, in your own words.</p>
@@ -351,6 +356,24 @@ function bindSession() {
     s.rec = listen(t => { s.answer = t; s.listening = false; s.rec = null; render(); }, () => { s.listening = false; s.rec = null; render(); });
     if (s.rec) { s.listening = true; s.rec.onend = () => { s.listening = false; s.rec = null; render(); }; render(); }
   };
+  const mp = $('#modePad'); if (mp) mp.onclick = () => { s.inputMode = 'pad'; render(); };
+  const mk = $('#modeKey'); if (mk) mk.onclick = () => { s.inputMode = 'keyboard'; render(); setTimeout(() => $('#answer')?.focus(), 50); };
+  const pad = $('#pad'); if (pad) setupPad(pad);
+  const pc = $('#padClear'); if (pc) pc.onclick = () => { const c = $('#pad'); c.getContext('2d').fillStyle = '#fff'; c.getContext('2d').fillRect(0, 0, c.width, c.height); drawGuide(c); c.dataset.dirty = ''; };
+  const pr = $('#padRead'); if (pr) pr.onclick = async () => {
+    const c = $('#pad'); if (!c.dataset.dirty) return toast('먼저 단어를 써 주세요.');
+    const png = c.toDataURL('image/png'); const b64 = png.split(',')[1];
+    state.busy = true; const btn = $('#padRead'); btn.disabled = true; btn.textContent = '읽는 중…';
+    try {
+      let r;
+      if (ai.getKey()) r = await ai.readHandwriting({ key: ai.getKey(), imageBase64: b64, mime: 'image/png' });
+      else r = await readWordImage(png, m => { btn.textContent = m; });
+      s.answer = (r.text || '').trim().toLowerCase();
+      $('#answer').value = s.answer;
+      toast(r.uncertain ? '글자가 애매해요. 읽힌 철자를 확인하고 고쳐 주세요.' : '읽힌 철자가 쓴 것과 같은지 확인해 주세요.');
+    } catch (err) { toast(err.message, 'error'); }
+    state.busy = false; btn.disabled = false; btn.textContent = '다 썼어요 → 읽기';
+  };
   const h = $('#hint'); if (h) h.onclick = () => { s.hinted = true; render(); };
   const c = $('#check'); if (c) c.onclick = check;
   const py = $('#parentYes'); if (py) py.onclick = () => finish(true, 'Great explanation!');
@@ -386,6 +409,23 @@ function bindSession() {
     if (correct) speak(w.word);
     render();
   }
+}
+
+// ---------- 손글씨 패드 ----------
+function drawGuide(c) {
+  const ctx = c.getContext('2d'); ctx.save(); ctx.strokeStyle = '#d9d2ef'; ctx.lineWidth = 2; ctx.setLineDash([8, 8]);
+  const y1 = c.height * 0.3, y2 = c.height * 0.7; ctx.beginPath(); ctx.moveTo(0, y1); ctx.lineTo(c.width, y1); ctx.moveTo(0, y2); ctx.lineTo(c.width, y2); ctx.stroke(); ctx.restore();
+}
+function setupPad(c) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1); const w = c.clientWidth || 320, h = 170;
+  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); c.style.height = h + 'px';
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); drawGuide(c);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1d1a33'; ctx.lineWidth = 6 * dpr;
+  let drawing = false, last = null;
+  const pos = e => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr]; };
+  c.onpointerdown = e => { drawing = true; last = pos(e); c.setPointerCapture(e.pointerId); c.dataset.dirty = '1'; ctx.beginPath(); ctx.moveTo(...last); ctx.lineTo(last[0] + 0.1, last[1]); ctx.stroke(); };
+  c.onpointermove = e => { if (!drawing) return; const p = pos(e); ctx.beginPath(); ctx.moveTo(...last); ctx.lineTo(...p); ctx.stroke(); last = p; };
+  c.onpointerup = c.onpointercancel = c.onpointerleave = () => { drawing = false; };
 }
 
 // ---------- 단어 추가 ----------
@@ -536,28 +576,27 @@ function bindWords() {
 function openWord(id) {
   const w = state.words.find(x => x.id === id); if (!w) return;
   const p = w.progress, t = p.tracks;
+  const st = srs.stage(p);
   const dlg = $('#dialog');
-  dlg.innerHTML = `<div class="dlg">
-    <div class="row between"><h2>${esc(w.word)} <button class="icon-btn" id="d-speak">🔊</button></h2><button class="icon-btn" id="d-close">✕</button></div>
-    <p class="muted">${esc(w.korean)}</p>
-    <label>영어 뜻<input id="d-def" value="${esc(w.definition)}"></label>
-    <label>책에서 본 문장<input id="d-ctx" value="${esc(w.context)}"></label>
-    <label>예문<input id="d-ex" value="${esc(w.example)}"></label>
-    <div class="button-row"><button class="ghost small" id="d-speak-ex">🔊 예문 듣기</button>${w.context ? '<button class="ghost small" id="d-speak-ctx">🔊 책 문장 듣기</button>' : ''}</div>
-    <div class="track-grid">
-      <div><span>뜻 이해</span><b>${t.meaning.ok}✓ ${t.meaning.miss}✗</b></div>
-      <div><span>떠올리기</span><b>${t.recall.ok}✓ ${t.recall.miss}✗</b></div>
-      <div><span>철자</span><b>${t.spell.ok}✓ ${t.spell.miss}✗</b></div>
-      <div><span>설명</span><b>${t.explain.ok}✓ ${t.explain.miss}✗</b></div>
+  dlg.innerHTML = `<div class="dlg word-dlg">
+    <div class="row between">
+      <div><h2 class="word-title" style="font-size:1.7rem">${esc(w.word)} <button class="icon-btn" id="d-speak" aria-label="읽어주기">🔊</button></h2>${w.korean ? `<p class="muted" style="margin:0">${esc(w.korean)}</p>` : ''}</div>
+      <button class="icon-btn" id="d-close" aria-label="닫기">✕</button>
     </div>
-    <p class="muted small">단계 ${srs.stage(p) === 'new' ? '새로운 발견' : srs.stage(p) === 'growing' ? '기억을 키우는 중' : '오래 기억하는 단어'} · ${p.attempts ? `다음 복습 ${fmtDate(p.due)} (간격 ${srs.INTERVALS[p.step]}일)` : '아직 학습 전'} · 힌트 없이 떠올린 날 ${[...new Set(p.hintFreeDays)].length}일</p>
-    <div class="button-row"><button class="ghost danger" id="d-del">삭제</button><button class="primary" id="d-save">저장</button></div></div>`;
+    <span class="pill">${st === 'new' ? '새로운 발견' : st === 'growing' ? '기억을 키우는 중' : '✦ 오래 기억하는 단어'}${p.attempts ? ` · 복습 ${fmtDate(p.due)}` : ''}</span>
+    <label>영어 뜻<textarea id="d-def" rows="2">${esc(w.definition)}</textarea></label>
+    <label><span class="row between">책에서 본 문장 ${w.context ? '<button class="icon-btn small-icon" id="d-speak-ctx" aria-label="문장 읽어주기">🔊</button>' : ''}</span><textarea id="d-ctx" rows="3" placeholder="책에서 본 문장">${esc(w.context)}</textarea></label>
+    <label><span class="row between">예문 ${w.example ? '<button class="icon-btn small-icon" id="d-speak-ex" aria-label="예문 읽어주기">🔊</button>' : ''}</span><textarea id="d-ex" rows="2" placeholder="예문">${esc(w.example)}</textarea></label>
+    ${p.attempts ? `<p class="muted small">뜻 이해 ${t.meaning.ok}✓ ${t.meaning.miss}✗ · 떠올리기 ${t.recall.ok}✓ ${t.recall.miss}✗ · 철자 ${t.spell.ok}✓ ${t.spell.miss}✗ · 설명 ${t.explain.ok}✓ ${t.explain.miss}✗ · 힌트 없이 떠올린 날 ${[...new Set(p.hintFreeDays)].length}일</p>` : ''}
+    <div class="row between" style="margin-top:6px"><button class="text-link danger" id="d-del">이 단어 삭제</button><button class="primary" id="d-save">저장</button></div></div>`;
   dlg.hidden = false;
+  dlg.querySelectorAll('textarea').forEach(el => { const fit = () => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 2 + 'px'; }; el.oninput = fit; fit(); });
   $('#d-close').onclick = () => { dlg.hidden = true; };
+  dlg.onclick = e => { if (e.target === dlg) dlg.hidden = true; };
   $('#d-speak').onclick = () => speak(w.word);
-  $('#d-speak-ex').onclick = () => speak(w.example || w.word);
-  const dc = $('#d-speak-ctx'); if (dc) dc.onclick = () => speak(w.context);
-  $('#d-save').onclick = async () => { w.definition = $('#d-def').value; w.context = $('#d-ctx').value; w.example = $('#d-ex').value; await db.putWord(w); dlg.hidden = true; toast('저장했어요.', 'success'); render(); };
+  const se = $('#d-speak-ex'); if (se) se.onclick = () => speak($('#d-ex').value || w.example);
+  const sc = $('#d-speak-ctx'); if (sc) sc.onclick = () => speak($('#d-ctx').value || w.context);
+  $('#d-save').onclick = async () => { w.definition = $('#d-def').value.trim(); w.context = $('#d-ctx').value.trim(); w.example = $('#d-ex').value.trim(); await db.putWord(w); dlg.hidden = true; toast('저장했어요.', 'success'); render(); };
   $('#d-del').onclick = async () => { if (!confirm(`“${w.word}”를 삭제할까요? 학습 기록도 함께 지워져요.`)) return; await db.deleteWord(w.id); state.words = state.words.filter(x => x.id !== w.id); dlg.hidden = true; render(); };
 }
 

@@ -140,6 +140,13 @@ ${WORD_SCHEMA}`;
   return call({ key, model, parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: imageBase64 } }] });
 }
 
+// 아이가 손으로 쓴 한 단어 읽기 (철자 문제용)
+export async function readHandwriting({ key, model, imageBase64, mime = 'image/png' }) {
+  const prompt = `This image shows ONE English word handwritten by a child with a finger or stylus. Read exactly what is written, letter by letter, even if it is misspelled — do NOT correct it to a real word. Lowercase unless clearly capital.
+Return JSON only: {"text": "the letters you read", "uncertain": true/false}`;
+  return call({ key, model, parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: imageBase64 } }], temperature: 0 });
+}
+
 // 아이가 탭해서 고른 단어들에 문맥 맞는 뜻 만들기 (사진 없이 문장만 전송)
 export async function defineWords({ key, model, words, sentences, age, level }) {
   const prompt = `A child read the text below and picked these words as unknown: ${words.map(w => `"${w}"`).join(', ')}.

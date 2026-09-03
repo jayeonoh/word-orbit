@@ -102,3 +102,16 @@ export function toSentences(text) {
     .filter(s => s.length >= 12 && (s.match(/[A-Za-z]{3,}/g) || []).length >= 3)
     .slice(0, 60);
 }
+
+// 손글씨 한 단어 읽기 (기기 안). 인쇄체에 맞춘 엔진이라 또박또박 쓴 글자만 잘 읽힘 — AI가 없을 때의 대안
+export async function readWordImage(dataUrl, onProgress) {
+  const worker = await getWorker(onProgress);
+  await worker.setParameters({ tessedit_pageseg_mode: '7', tessedit_char_whitelist: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'-" });
+  try {
+    const { data } = await worker.recognize(dataUrl);
+    const text = (data.text || '').replace(/[^A-Za-z'-]/g, '').toLowerCase();
+    return { text, uncertain: (data.confidence || 0) < 70 };
+  } finally {
+    await worker.setParameters({ tessedit_pageseg_mode: '3', tessedit_char_whitelist: '' });
+  }
+}
