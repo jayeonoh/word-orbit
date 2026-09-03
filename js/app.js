@@ -184,7 +184,7 @@ function renderHome() {
       <a href="#add" class="btn primary">＋ 단어 추가하기</a>
     </div>
     <section class="panel hero">
-      <div class="row between"><span class="pill">● 나의 단어 우주</span><span><a href="#shelf" class="text-link">나의 책장 ↗</a> &nbsp; <a href="#memory" class="text-link">기억 보관소 ↗</a></span></div>
+      <div class="row between hero-head"><span class="pill">● 나의 단어 우주</span><span class="hero-links"><a href="#shelf">📚 책장</a><a href="#memory">✦ 보관소</a></span></div>
       <h2 class="hero-title">오늘 만난 단어가<br><em>오래 남는 기억으로.</em></h2>
       <p class="muted">알아보고, 떠올리고, 내 말로 설명해요.</p>
       <div class="orbit-stage">
@@ -602,18 +602,27 @@ function openWord(id) {
 
 // ---------- 기억 보관소 ----------
 function renderMemory() {
-  const m = state.words.filter(w => w.progress.mastered).sort((a, b) => (b.progress.masteredAt || '').localeCompare(a.progress.masteredAt || ''));
+  const m = state.words.filter(w => w.progress.mastered).sort((a, b) => (a.progress.masteredAt || '').localeCompare(b.progress.masteredAt || ''));
   const g = state.words.filter(w => srs.stage(w.progress) === 'growing').sort((a, b) => b.progress.step - a.progress.step).slice(0, 6);
+  let seen = []; try { seen = JSON.parse(localStorage.getItem('wo.vaultSeen.' + state.profile.id) || '[]'); } catch {}
+  const fresh = m.filter(w => !seen.includes(w.id)).map(w => w.id);
+  try { localStorage.setItem('wo.vaultSeen.' + state.profile.id, JSON.stringify(m.map(w => w.id))); } catch {}
   return `<p class="eyebrow">MEMORY ROOM</p><h1>기억 보관소</h1>
-    <p class="muted">여러 날에 걸쳐 힌트 없이 떠올린 단어가 여기로 굴러와요. 가끔 다시 꺼내 보지만, 잊었다고 구슬을 빼앗지는 않아요.</p>
+    <p class="muted">여러 날에 걸쳐 힌트 없이 떠올린 단어가 구슬이 되어 굴러 들어와요. 가끔 다시 꺼내 보지만, 잊었다고 구슬을 빼앗지는 않아요.</p>
     <section class="panel hero">
-      ${m.length ? `<div class="orb-grid">${m.map((w, i) => `<div class="orb-card" data-word="${w.id}">${orb(w, i, true)}<div><b>${esc(w.word)}</b><span class="muted">${esc(w.korean || w.definition)}</span><small>${fmtDate(w.progress.masteredAt)}부터</small></div></div>`).join('')}</div>`
-        : `<p class="muted center">아직 보관소에 온 구슬이 없어요.<br>같은 단어를 3일 이상, 일주일 넘게 힌트 없이 떠올리면 여기로 와요.</p>`}
+      <div class="vault-scene">
+        <div class="chute"></div>
+        <div class="vault">
+          ${m.map((w, i) => `<div class="orb-wrap-holder ${fresh.includes(w.id) ? 'rolling' : ''}" style="animation-delay:${fresh.indexOf(w.id) * 0.35}s">${orb(w, i)}</div>`).join('')}
+          ${m.length ? '' : '<div class="vault-empty"><p class="muted">아직 보관소에 온 구슬이 없어요.<br>같은 단어를 3일 이상, 일주일 넘게 힌트 없이 떠올리면 여기로 굴러와요.</p></div>'}
+        </div>
+      </div>
+      <p class="vault-count"><b>${m.length}</b><span class="muted"> 개의 구슬이 빛나고 있어요</span></p>
     </section>
-    ${g.length ? `<h3>곧 굴러올 구슬</h3><div class="orb-grid">${g.map((w, i) => `<div class="orb-card" data-word="${w.id}">${orb(w, i + 2, true)}<div><b>${esc(w.word)}</b><small>힌트 없이 ${[...new Set(w.progress.hintFreeDays)].length}일 · 간격 ${srs.INTERVALS[w.progress.step]}일</small></div></div>`).join('')}</div>` : ''}
+    ${g.length ? `<h3>곧 굴러올 구슬</h3><div class="orb-grid">${g.map((w, i) => `<div class="orb-card" data-word="${w.id}">${orb(w, i + 2, true)}<div class="orb-card-text"><b>${esc(w.word)}</b><small>힌트 없이 ${[...new Set(w.progress.hintFreeDays)].length}일 · 간격 ${srs.INTERVALS[w.progress.step]}일</small></div></div>`).join('')}</div>` : ''}
     <section class="panel soft"><h3>복습 원리</h3><p class="muted">시간 간격을 두고, 답을 보지 않은 채 다시 떠올리는 연습이 장기 기억에 도움이 돼요. 이 앱은 1일 → 3일 → 1주 → 2주 → 1달 → 2달 간격으로 시작해서, 아이의 답에 따라 단어마다 간격을 조절해요.</p></section>`;
 }
-function bindMemory() { document.querySelectorAll('.orb-card').forEach(el => el.onclick = () => openWord(el.dataset.word)); }
+function bindMemory() { document.querySelectorAll('.orb-card, .vault .orb-wrap').forEach(el => el.onclick = () => openWord(el.dataset.word)); }
 
 // ---------- 책 ----------
 const booksView = { seed: 0, band: '', topic: '', kind: '', awardOnly: false, limit: 12, showShelf: false };
