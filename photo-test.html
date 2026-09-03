@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Word Orbit · 사진 추출 테스트</title>
+  <link rel="stylesheet" href="css/app.css">
+  <style>
+    body { padding: 20px; } .wrap { max-width: 760px; margin: 0 auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; } td, th { border-top: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+    pre { background: var(--soft); padding: 10px; border-radius: 10px; overflow: auto; font-size: .8rem; max-height: 300px; }
+    .log { font-size: .85rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">STEP 0 · 검증</p>
+  <h1>사진에서 표시한 단어 찾기 테스트</h1>
+  <p class="muted">앱을 만들기 전에 가장 먼저 확인할 것: 실제 책·과제 사진에서 형광펜·플래그잇 단어를 Gemini 무료 티어가 얼마나 정확히 잡는지. 사진은 브라우저에서 줄여서 Google로만 전송되고 어디에도 저장되지 않아요.</p>
+  <section class="panel">
+    <div class="form-grid">
+      <label class="wide">Gemini API 키 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">(무료 발급)</a><input id="key" type="password" placeholder="AQ.… 또는 AIza…"></label>
+      <label>모델<select id="model"></select></label>
+      <label>모드<select id="mode"><option value="auto">표시한 단어 자동 (형광펜·플래그)</option><option value="point">손가락으로 가리킨 단어</option><option value="page">페이지 본문만 (탭용 · 기기 안 OCR)</option></select></label>
+      <label>아이 나이<input id="age" type="number" value="9"></label>
+      <label>읽기 수준<select id="level"><option value="beginner">기초</option><option value="intermediate" selected>중간</option><option value="advanced">능숙</option></select></label>
+    </div>
+    <div class="button-row">
+      <label class="btn ghost">사진 선택 (여러 장 가능) <input id="files" type="file" accept="image/*" multiple hidden></label>
+      <button class="primary" id="run" disabled>✨ 표시한 단어 찾기</button>
+    </div>
+    <p class="log" id="log"></p>
+  </section>
+  <div id="results"></div>
+  <section class="panel soft">
+    <h3>결과를 볼 때 확인할 것</h3>
+    <p>① 표시한 단어만 골랐나? (표시 안 한 단어가 섞이면 ✗) ② 빠진 단어는 없나? ③ 문맥 문장을 제대로 읽었나? ④ 뜻이 아이 수준에 맞게 쉬운가? ⑤ 오답 보기 4개가 그럴듯한가?</p>
+    <p class="muted small">사진 5~10장으로 해보고, 정확도가 낮으면 앱 설계를 "페이지 OCR → 아이가 단어 탭해서 고르기"로 바꿔요.</p>
+  </section>
+</div>
+<script type="module">
+  import * as ai from './js/ai.js?v=5';
+  import { pageSentences } from './js/ocr.js?v=5';
+  const $ = s => document.querySelector(s);
+  ai.onProgressChange(m => { $('#log').textContent = ($('#log').dataset.base || '') + ' · ' + m; });
+  const fillModels = (names) => { $('#model').innerHTML = `<option value="">자동 선택</option>` + names.map(m => `<option ${ai.getModel() === m ? 'selected' : ''}>${m}</option>`).join(''); };
+  fillModels(ai.getModelList());
+  $('#key').value = ai.getKey();
+  $('#key').onchange = async () => { try { fillModels(await ai.listModels($('#key').value.trim())); $('#log').textContent = '모델 목록을 받아왔어요.'; } catch (e) { $('#log').textContent = e.message; } };
+  let files = [];
+  $('#files').onchange = e => { files = [...e.target.files]; $('#run').disabled = !files.length; $('#log').textContent = `${files.length}장 선택됨`; };
+  $('#run').onclick = async () => {
+    const key = $('#key').value.trim(); if (!key) return alert('API 키를 입력해 주세요.');
+    ai.setKey(key);
+    $('#run').disabled = true; $('#results').innerHTML = '';
+    let model = $('#model').value;
+    try { if (!model) { model = await ai.testConnection({ key, model: '' }); fillModels(ai.getModelList()); $('#model').value = model; } else ai.setModel(model); }
+    catch (e) { $('#log').textContent = e.message; $('#run').disabled = false; return; }
+    for (const [i, f] of files.entries()) {
+      $('#log').dataset.base = `${i + 1}/${files.length} 읽는 중… (${f.name})`; $('#log').textContent = $('#log').dataset.base;
+      const t0 = performance.now();
+      const sec = document.createElement('section'); sec.className = 'panel'; $('#results').appendChild(sec);
+      try {
+        const img = await ai.fileToBase64(f);
+        const r = $('#mode').value === 'page'
+          ? { words: [], sentences: await pageSentences(f, m => { $('#log').textContent = ($('#log').dataset.base || '') + ' · ' + m; }), note: '기기 안 OCR(Tesseract)로 읽음 — AI 미사용' }
+          : await ai.analyzePage({ key, model, imageBase64: img.base64, mime: img.mime, age: Number($('#age').value), level: $('#level').value, mode: $('#mode').value });
+        const ms = Math.round(performance.now() - t0);
+        sec.innerHTML = `<h3>${f.name} <span class="muted small">${ms} ms · 표시 단어 ${(r.words || []).length}개 · 본문 ${(r.sentences || []).length}문장</span></h3>
+          <div class="row wrap" style="align-items:flex-start"><img src="${img.preview}" style="max-width:260px;border-radius:12px">
+          <div style="flex:1;min-width:280px">${r.note ? `<p class="info-line">${r.note}</p>` : ''}
+          ${(r.sentences || []).length ? `<p class="small">${(r.sentences || []).map(x => x.replace(/</g,'&lt;')).join(' ')}</p>` : ''}
+          <table><tr><th>단어</th><th>뜻</th><th>문맥</th></tr>${(r.words || []).map(w => `<tr><td><b>${w.word}</b><br><span class="muted small">${w.korean || ''} · ${w.topic || ''}</span></td><td>${w.definition}<br><span class="muted small">${w.example || ''}</span></td><td class="muted small">${w.context || ''}</td></tr>`).join('')}</table></div></div>
+          <details><summary class="muted small">원본 JSON</summary><pre>${JSON.stringify(r, null, 2).replace(/</g, '&lt;')}</pre></details>`;
+      } catch (err) { sec.innerHTML = `<h3>${f.name}</h3><p class="info-line">${err.message}</p>`; }
+    }
+    $('#log').textContent = '완료'; $('#run').disabled = false;
+  };
+</script>
+</body>
+</html>
