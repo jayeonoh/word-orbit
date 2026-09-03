@@ -527,7 +527,7 @@ function renderWords() {
   const f = [['all', '전체'], ['new', '새로운 발견'], ['growing', '키우는 중'], ['mastered', '오래 기억']];
   return `<p class="eyebrow">MY WORD UNIVERSE</p><div class="row between"><h1>나의 단어 <span class="muted">${state.words.length}</span></h1><a href="#add" class="btn primary">＋ 추가</a></div>
     <div class="tabs">${f.map(([id, l]) => `<button class="tab ${wordsView.filter === id ? 'active' : ''}" data-f="${id}">${l}</button>`).join('')}</div>
-    ${list.length ? `<div class="orb-grid">${list.map((w, i) => `<div class="orb-card" data-word="${w.id}">${orb(w, i, true)}<div><b>${esc(w.word)}</b><span class="muted">${esc(w.korean || w.definition)}</span><small>${w.progress.attempts ? `다음 복습 ${fmtDate(w.progress.due)}` : '아직 만나지 않음'}</small></div></div>`).join('')}</div>` : '<section class="panel"><p class="muted center">아직 단어가 없어요.</p></section>'}`;
+    ${list.length ? `<div class="orb-grid">${list.map((w, i) => `<div class="orb-card" data-word="${w.id}">${orb(w, i, true)}<div class="orb-card-text"><b>${esc(w.word)}</b><span class="muted">${esc(w.korean || w.definition)}</span>${w.progress.attempts ? `<small>${w.progress.mastered ? '✦ 오래 기억' : `복습 ${fmtDate(w.progress.due)}`}</small>` : ''}</div></div>`).join('')}</div>` : '<section class="panel"><p class="muted center">아직 단어가 없어요.</p></section>'}`;
 }
 function bindWords() {
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => { wordsView.filter = b.dataset.f; render(); });
@@ -656,41 +656,47 @@ function bindBooks() {
 }
 
 // ---------- 나의 책장 ----------
-const shelfView = { adding: false, editing: null };
+const shelfView = { adding: false, editing: null, month: '' };
 const SPINE_COLORS = ['#b9a8ff', '#a8d8b9', '#f5cf9a', '#a9cdef', '#f3b7d0', '#ffd6a5', '#c7e9b0', '#d7c5f5', '#f9c4c4', '#bde0fe'];
 function spineColor(title) { let h = 0; for (const c of title) h = (h * 31 + c.charCodeAt(0)) >>> 0; return SPINE_COLORS[h % SPINE_COLORS.length]; }
 function spineHeight(e) { const base = { 'P-1': 96, '2-3': 110, '4-5': 124, '6-7': 136 }[e.band] || 116; let h = 0; for (const c of e.title) h = (h * 7 + c.charCodeAt(0)) % 17; return base + h; }
 function monthKey(d) { return d.slice(0, 7); }
 function monthLabel(k) { const [y, m] = k.split('-'); return `${y}년 ${Number(m)}월`; }
+function shiftMonth(k, n) { const [y, m] = k.split('-').map(Number); const d = new Date(y, m - 1 + n, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
 function renderShelf() {
   const p = state.profile, log = (p.readLog || []).slice().sort((a, b) => a.date.localeCompare(b.date));
   const today = srs.todayKey();
-  const thisMonth = log.filter(e => monthKey(e.date) === monthKey(today)).length;
-  const byMonth = new Map();
-  log.forEach(e => { const k = monthKey(e.date); if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k).push(e); });
-  const months = [...byMonth.keys()].sort().reverse();
+  if (!shelfView.month) shelfView.month = monthKey(today);
+  const cur = shelfView.month;
+  const inMonth = log.filter(e => monthKey(e.date) === cur).slice().reverse();
+  const hasPrev = log.some(e => monthKey(e.date) < cur), hasNext = cur < monthKey(today);
   const newest = log.length ? log[log.length - 1].id : null;
   const form = shelfView.adding ? `<section class="panel">
       <h3>읽은 책 꽂기</h3>
       <div class="form-grid">
-        <label class="wide">책 제목<input id="rl-title" placeholder="The Wild Robot" list="rl-titles"><datalist id="rl-titles">${BOOKS_ALL.slice(0, 500).map(b => `<option value="${esc(b.title)}">`).join('')}</datalist></label>
+        <label class="wide">책 제목<input id="rl-title" placeholder="The Wild Robot" list="rl-titles"><datalist id="rl-titles">${BOOKS_ALL.map(b => `<option value="${esc(b.title)}">`).join('')}</datalist></label>
         <label>작가<input id="rl-author" placeholder="Peter Brown"></label>
         <label>읽은 날<input id="rl-date" type="date" value="${today}"></label>
         <label>어땠어요?<select id="rl-feeling"><option value="liked">재미있었어요</option><option value="ok">괜찮았어요</option><option value="hard">어려웠어요</option></select></label>
       </div>
       <div class="button-row"><button class="ghost" id="rl-cancel">취소</button><button class="primary" id="rl-save">책장에 꽂기</button></div>
     </section>` : '';
-  return `<p class="eyebrow">MY BOOKSHELF</p>
-    <div class="row between wrap"><div><h1>${esc(p.name)}의 책장</h1><p class="muted">읽은 책이 한 권씩 꽂혀요. 지금까지 <b>${log.length}권</b>${thisMonth ? ` · 이달 ${thisMonth}권` : ''}</p></div>
-      <div class="button-row" style="margin:0"><button class="ghost" id="rl-export" ${log.length ? '' : 'disabled'}>⬇ 엑셀로 내보내기</button><button class="primary" id="rl-add">＋ 읽은 책 꽂기</button></div></div>
+  return `<div class="row between wrap"><div><p class="eyebrow">MY BOOKSHELF</p><h1>${esc(p.name)}의 책장</h1><p class="muted">지금까지 <b>${log.length}권</b> 읽었어요.</p></div>
+      <button class="ghost small" id="rl-export" title="엑셀로 내보내기" ${log.length ? '' : 'disabled'}>⬇ 엑셀</button></div>
     ${form}
-    ${log.length ? months.map(k => `<section class="panel shelf-panel">
-      <div class="row between"><h3>${monthLabel(k)}</h3><span class="pill">${byMonth.get(k).length}권</span></div>
+    <section class="panel shelf-panel">
+      <div class="row between">
+        <button class="icon-btn" id="rl-prev" ${hasPrev ? '' : 'disabled'} aria-label="이전 달">‹</button>
+        <div class="center"><h3 style="margin:0">${monthLabel(cur)}</h3><span class="muted small">${inMonth.length}권</span></div>
+        <button class="icon-btn" id="rl-next" ${hasNext ? '' : 'disabled'} aria-label="다음 달">›</button>
+      </div>
       <div class="shelf">
-        ${byMonth.get(k).slice().reverse().map(e => `<button class="spine ${e.id === newest ? 'new' : ''}" data-log="${e.id}" style="background:${spineColor(e.title)};height:${spineHeight(e)}px;width:${e.title.length > 18 ? 42 : e.title.length > 10 ? 38 : 34}px" title="${esc(e.title)}"><span class="spine-title">${esc(e.title)}</span><span class="spine-mark">${e.feeling === 'liked' ? '★' : e.feeling === 'hard' ? '△' : '○'}</span></button>`).join('')}
+        ${inMonth.map(e => `<button class="spine ${e.id === newest ? 'new' : ''}" data-log="${e.id}" style="background:${spineColor(e.title)};height:${spineHeight(e)}px;width:${e.title.length > 18 ? 42 : e.title.length > 10 ? 38 : 34}px" title="${esc(e.title)}"><span class="spine-title">${esc(e.title)}</span><span class="spine-mark">${e.feeling === 'liked' ? '★' : e.feeling === 'hard' ? '△' : '○'}</span></button>`).join('')}
         <div class="shelf-board"></div>
-      </div></section>`).join('')
-      : `<section class="panel shelf-panel empty"><div class="shelf"><div class="shelf-board"></div></div><p class="muted center">아직 꽂힌 책이 없어요.<br>"다음에 읽을 책"에서 읽었어요를 누르거나, 위의 버튼으로 직접 꽂아 보세요.</p></section>`}
+      </div>
+      ${inMonth.length ? '' : `<p class="muted center">${cur === monthKey(today) ? '이번 달에 꽂힌 책이 아직 없어요.' : '이 달에는 꽂힌 책이 없어요.'}</p>`}
+      <button class="primary big" id="rl-add">＋ 읽은 책 꽂기</button>
+    </section>
     <p class="muted small center">★ 재미있었어요 · ○ 괜찮았어요 · △ 어려웠어요 · 책등을 누르면 자세히 볼 수 있어요</p>`;
 }
 function bindShelf() {
@@ -703,9 +709,11 @@ function bindShelf() {
     const log = (state.profile.readLog || []).filter(e => e.title.toLowerCase() !== title.toLowerCase());
     log.push({ id: db.uid(), title: book?.title || title, author: $('#rl-author').value.trim() || book?.author || '', band: book?.band || '', kind: book?.kind || '', date: $('#rl-date').value || srs.todayKey(), feeling, source: book ? 'app' : 'manual' });
     const rx = { ...(state.profile.bookReactions || {}) }; if (book && feeling !== 'ok') rx[book.title] = feeling; else if (book) rx[book.title] = 'liked';
-    await saveProfile({ readLog: log, bookReactions: rx }); shelfView.adding = false; toast('책장에 꽂았어요 📚', 'success'); render();
+    await saveProfile({ readLog: log, bookReactions: rx }); shelfView.adding = false; shelfView.month = monthKey(log[log.length - 1].date); toast('책장에 꽂았어요 📚', 'success'); render();
   };
   document.querySelectorAll('.spine').forEach(el => el.onclick = () => openReadLog(el.dataset.log));
+  const pv = $('#rl-prev'); if (pv) pv.onclick = () => { shelfView.month = shiftMonth(shelfView.month, -1); render(); };
+  const nx = $('#rl-next'); if (nx) nx.onclick = () => { shelfView.month = shiftMonth(shelfView.month, 1); render(); };
   const ex = $('#rl-export'); if (ex) ex.onclick = () => {
     const p = state.profile, log = (p.readLog || []).slice().sort((a, b) => a.date.localeCompare(b.date));
     const FEEL = { liked: '재미있었어요', ok: '괜찮았어요', hard: '어려웠어요' };
