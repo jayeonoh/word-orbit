@@ -1,0 +1,690 @@
+// app.js — 화면과 흐름. 프레임워크 없이 동작합니다.
+import { db } from './db.js?v=5';
+import * as srs from './srs.js?v=5';
+import * as ai from './ai.js?v=5';
+import { SAMPLE_WORDS, TOPICS, SOURCES } from './data.js?v=5';
+import { recommend } from './books.js?v=5';
+import { pageSentences } from './ocr.js?v=5';
+
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const shuffle = a => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
+const fmtDate = k => { const [y, m, d] = k.split('-'); return `${Number(m)}월 ${Number(d)}일`; };
+
+const NAV = [
+  { id: 'home', label: '오늘의 학습', sub: 'Today', icon: '✦' },
+  { id: 'words', label: '나의 단어', sub: 'My words', icon: '◉' },
+  { id: 'memory', label: '기억 보관소', sub: 'Memory room', icon: '☆' },
+  { id: 'books', label: '다음에 읽을 책', sub: 'Book shelf', icon: '▤' },
+  { id: 'parents', label: '부모 리포트', sub: 'For parents', icon: '☺' },
+];
+const ORB_COLORS = ['purple', 'green', 'orange', 'blue', 'pink'];
+
+const state = {
+  profiles: [], profile: null, words: [], reviews: [],
+  route: 'home', session: null, busy: false, sidebar: false, progress: '',
+};
+ai.onProgressChange(m => { state.progress = m; const el = document.getElementById('aiProgress'); if (el) el.textContent = m; });
+
+// ---------- 공용 ----------
+function toast(msg, kind = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`; el.textContent = msg;
+  $('#toasts').appendChild(el);
+  setTimeout(() => el.classList.add('show'), 10);
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, 3200);
+}
+function speak(text, lang = 'en-AU') {
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.lang = lang; u.rate = 0.9;
+    const v = speechSynthesis.getVoices().find(v => v.lang === lang) || speechSynthesis.getVoices().find(v => v.lang.startsWith('en'));
+    if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  } catch {}
+}
+function listen(onResult, onError) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { toast('이 브라우저는 음성 입력을 지원하지 않아요. 직접 입력해 주세요.'); return null; }
+  const r = new SR(); r.lang = 'en-AU'; r.interimResults = false; r.continuous = false;
+  r.onresult = e => onResult(e.results[0][0].transcript);
+  r.onerror = () => { onError && onError(); toast('마이크 권한을 확인하거나 답을 입력해 주세요.'); };
+  try { r.start(); } catch { toast('마이크를 시작하지 못했어요.'); return null; }
+  return r;
+}
+
+async function loadProfile(id) {
+  state.profiles = await db.listProfiles();
+  if (!state.profiles.length) { state.profile = null; state.words = []; state.reviews = []; return; }
+  const savedId = id || await db.getMeta('activeProfile');
+  state.profile = state.profiles.find(p => p.id === savedId) || state.profiles[0];
+  await db.setMeta('activeProfile', state.profile.id);
+  state.words = await db.listWords(state.profile.id);
+  state.reviews = await db.listReviews(state.profile.id);
+}
+async function saveProfile(patch) {
+  Object.assign(state.profile, patch, { updated: new Date().toISOString() });
+  await db.putProfile(state.profile);
+}
+async function addWords(items, origin = 'manual') {
+  const today = srs.todayKey();
+  const existing = new Set(state.words.map(w => w.word.toLowerCase()));
+  const ws = items.filter(i => i.word && !existing.has(i.word.toLowerCase())).map(i => ({
+    id: db.uid(), profileId: state.profile.id, created: new Date().toISOString(), origin,
+    word: i.word.trim().toLowerCase(), korean: i.korean || '', definition: i.definition || '', context: i.context || '',
+    example: i.example || '', distractors: Array.isArray(i.distractors) ? i.distractors.slice(0, 4) : [], topic: i.topic || 'other',
+    simpleDefinition: '', progress: srs.newProgress(today),
+  }));
+  if (!ws.length) return 0;
+  await db.putWords(ws);
+  state.words.push(...ws);
+  return ws.length;
+}
+
+// ---------- 렌더 ----------
+function render() {
+  const app = $('#app');
+  if (!state.profile) { app.innerHTML = renderOnboarding(); bindOnboarding(); return; }
+  const page = state.session ? renderSession() : ({ home: renderHome, add: renderAdd, words: renderWords, memory: renderMemory, books: renderBooks, parents: renderParents }[state.route] || renderHome)();
+  app.innerHTML = `
+    <aside class="sidebar ${state.sidebar ? 'open' : ''}">
+      <div class="brand">✦ Word Orbit</div>
+      <nav>${NAV.map(n => `<a href="#${n.id}" class="${state.route === n.id && !state.session ? 'active' : ''}"><span class="ic">${n.icon}</span><span>${n.label}<small>${n.sub}</small></span></a>`).join('')}</nav>
+      <div class="side-foot">
+        <label>아이</label>
+        <select id="profileSwitch">${state.profiles.map(p => `<option value="${p.id}" ${p.id === state.profile.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
+      </div>
+    </aside>
+    <div class="scrim ${state.sidebar ? 'show' : ''}" id="scrim"></div>
+    <main>
+      <header class="topbar">
+        <button class="icon-btn" id="menuBtn" aria-label="메뉴">☰</button>
+        <span class="topbar-title">${state.session ? '오늘의 학습' : NAV.find(n => n.id === state.route)?.label || '단어 추가'}</span>
+        <span class="avatar" title="${esc(state.profile.name)}">${esc(state.profile.name.slice(0, 1).toUpperCase())}</span>
+      </header>
+      <div class="page">${page}</div>
+      <footer class="app-footer"><span>✦ wordorbit</span><span>Every word opens a little world.</span></footer>
+    </main>`;
+  bindCommon();
+  if (state.session) bindSession(); else ({ home: bindHome, add: bindAdd, words: bindWords, memory: bindMemory, books: bindBooks, parents: bindParents }[state.route] || bindHome)();
+}
+function bindCommon() {
+  $('#menuBtn').onclick = () => { state.sidebar = !state.sidebar; render(); };
+  $('#scrim').onclick = () => { state.sidebar = false; render(); };
+  $('#profileSwitch').onchange = async e => { await loadProfile(e.target.value); state.session = null; render(); };
+  document.querySelectorAll('.sidebar nav a').forEach(a => a.onclick = () => { state.sidebar = false; });
+}
+function orb(word, i, small = false) {
+  const st = word ? srs.stage(word.progress) : 'new';
+  return `<button class="orb-wrap ${small ? 'small' : ''}" data-word="${word ? word.id : ''}" ${word ? '' : 'disabled'}>
+    <span class="orb ${ORB_COLORS[i % ORB_COLORS.length]} ${st}"><span class="glint"></span></span>
+    ${word ? `<span class="orb-label">${esc(word.word)}</span>` : ''}</button>`;
+}
+
+// ---------- 온보딩 ----------
+function renderOnboarding() {
+  return `<div class="onboard">
+    <div class="brand big">✦ Word Orbit</div>
+    <h1>책에서 만난 단어가<br>오래 남는 기억으로.</h1>
+    <p class="muted">서버 없이 이 기기 안에서만 동작해요. 먼저 아이 프로필을 만들어 주세요.</p>
+    ${profileForm({})}
+    <button class="primary big" id="createProfile">시작하기</button>
+  </div>`;
+}
+function profileForm(p) {
+  return `<div class="form-grid">
+    <label>이름<input id="pf-name" value="${esc(p.name || '')}" placeholder="예: Siheon"></label>
+    <label>나이<input id="pf-age" type="number" min="4" max="14" value="${p.age || 8}"></label>
+    <label>영어 읽기 수준<select id="pf-level">
+      <option value="beginner" ${p.level === 'beginner' ? 'selected' : ''}>기초 (짧은 문장, 그림책)</option>
+      <option value="intermediate" ${!p.level || p.level === 'intermediate' ? 'selected' : ''}>중간 (쉬운 챕터북)</option>
+      <option value="advanced" ${p.level === 'advanced' ? 'selected' : ''}>능숙 (챕터북 혼자 읽기)</option></select></label>
+    <label>하루 목표 (분)<input id="pf-minutes" type="number" min="3" max="30" value="${p.minutes || 10}"></label>
+    <label>하루 새 단어 최대<input id="pf-new" type="number" min="1" max="10" value="${p.newPerDay || 4}"></label>
+  </div>`;
+}
+function readProfileForm() {
+  return { name: $('#pf-name').value.trim() || 'Explorer', age: Number($('#pf-age').value) || 8, level: $('#pf-level').value, minutes: Number($('#pf-minutes').value) || 10, newPerDay: Number($('#pf-new').value) || 4 };
+}
+function bindOnboarding() {
+  $('#createProfile').onclick = async () => {
+    const p = { id: db.uid(), created: new Date().toISOString(), interests: [], bookReactions: {}, allowExplain: true, ...readProfileForm() };
+    await db.putProfile(p); await loadProfile(p.id);
+    await addWords(SAMPLE_WORDS, 'sample');
+    toast(`${p.name}의 단어 우주를 만들었어요. 예시 단어 8개를 넣어두었어요.`, 'success');
+    state.route = 'home'; render();
+  };
+}
+
+// ---------- 홈 ----------
+function renderHome() {
+  const p = state.profile, today = srs.todayKey();
+  const s = srs.buildSession(state.words, p, today);
+  const counts = { new: 0, growing: 0, mastered: 0 };
+  state.words.forEach(w => counts[srs.stage(w.progress)]++);
+  const showcase = [...s.review, ...s.intro].slice(0, 5);
+  const total = s.review.length + s.intro.length;
+  return `
+    <p class="eyebrow">A LITTLE EVERY DAY</p>
+    <div class="row between">
+      <div><h1>반가워, ${esc(p.name)} <span class="spark">✦</span></h1><p class="muted">오늘도 새로운 단어를 만나볼까?</p></div>
+      <a href="#add" class="btn primary">＋ 단어 추가하기</a>
+    </div>
+    <section class="panel hero">
+      <div class="row between"><span class="pill">● 나의 단어 우주</span><a href="#memory" class="text-link">기억 보관소 ↗</a></div>
+      <h2 class="hero-title">오늘 만난 단어가<br><em>오래 남는 기억으로.</em></h2>
+      <p class="muted">알아보고, 떠올리고, 내 말로 설명해요.</p>
+      <div class="orbit-stage">
+        <div class="ring r1"></div><div class="ring r2"></div>
+        ${showcase.length ? showcase.map((w, i) => `<div class="orbit-pos p${i}">${orb(w, i)}</div>`).join('') : '<p class="muted center">단어를 추가하면 여기에 구슬이 떠요.</p>'}
+      </div>
+      <div class="stage-counts">
+        <div><b>${counts.new}개</b><span>새로운 발견</span></div>
+        <div><b>${counts.growing}개</b><span>기억을 키우는 중</span></div>
+        <div><b>${counts.mastered}개</b><span>오래 기억하는 단어</span></div>
+      </div>
+    </section>
+    <section class="panel mission">
+      <p class="eyebrow">TODAY’S LITTLE MISSION</p>
+      <div class="row between wrap">
+        <div><h2>오늘의 기억 돌보기</h2><p class="muted">나에게 맞는 만큼, 차근차근. 하루 목표 ${p.minutes || 10}분</p></div>
+        <div class="bignum"><b>${total}</b><span>오늘 만날 단어</span></div>
+      </div>
+      <div class="mission-grid">
+        <div><span>다시 떠올릴 단어</span><b>${s.review.length}개</b></div>
+        <div><span>새롭게 만날 단어</span><b>${s.intro.length}개</b></div>
+        ${s.carried ? `<div><span>내일로 나눈 복습</span><b>${s.carried}개</b></div>` : ''}
+        ${s.waiting ? `<div><span>기다리는 새 단어</span><b>${s.waiting}개</b></div>` : ''}
+      </div>
+      ${total ? `<button class="primary big" id="startSession">오늘의 학습 시작 →</button>` : `<p class="info-line">오늘 복습할 단어가 없어요. ${state.words.length ? '내일 다시 만나요!' : '단어를 추가해 볼까요?'}</p>`}
+    </section>
+    <section class="panel soft">
+      <h3>작은 발견을 모아볼까요?</h3>
+      <div class="three">
+        <div><b>사진 한 장으로 쏙</b><p>책에 표시한 단어를 한 번에 모아요.</p></div>
+        <div><b>뜻을 넘어, 이해하기</b><p>내가 읽은 문장 속에서 배워요.</p></div>
+        <div><b>정답 횟수보다, 시간</b><p>시간이 지나도 떠올리는 힘을 길러요.</p></div>
+      </div>
+    </section>`;
+}
+function bindHome() {
+  const b = $('#startSession'); if (b) b.onclick = startSession;
+  document.querySelectorAll('.orb-wrap[data-word]').forEach(el => el.onclick = () => openWord(el.dataset.word));
+}
+
+// ---------- 학습 세션 ----------
+function startSession() {
+  const s = srs.buildSession(state.words, state.profile);
+  const queue = [...s.intro.map(w => ({ id: w.id, intro: true })), ...s.review.map(w => ({ id: w.id, intro: false }))];
+  state.session = { queue, index: 0, results: [], phase: 'intro', answer: '', hinted: false, feedback: null, options: null, simple: '', rec: null };
+  prepareItem();
+  render();
+}
+function currentWord() { return state.words.find(w => w.id === state.session.queue[state.session.index].id); }
+function prepareItem() {
+  const s = state.session, item = s.queue[s.index];
+  if (!item) return;
+  const w = currentWord();
+  s.answer = ''; s.hinted = false; s.feedback = null; s.simple = ''; s.listening = false;
+  if (item.intro || w.progress.needsSimplify) { s.phase = 'intro'; s.mode = 'meaning'; }
+  else { s.phase = 'quiz'; s.mode = srs.pickMode(w.progress, { allowExplain: state.profile.allowExplain !== false }); }
+  if (s.mode === 'meaning') {
+    let d = (w.distractors || []).filter(Boolean);
+    if (d.length < 4) {
+      const others = shuffle(state.words.filter(o => o.id !== w.id && o.definition).map(o => o.definition));
+      d = [...d, ...others].slice(0, 4);
+    }
+    s.options = shuffle([w.definition, ...d]);
+  }
+}
+function renderSession() {
+  const s = state.session;
+  if (s.index >= s.queue.length) return renderSessionEnd();
+  const w = currentWord(), p = state.profile;
+  const head = `<div class="row between"><span class="pill">${s.index + 1} / ${s.queue.length}</span><button class="ghost small" id="quitSession">그만하기</button></div>`;
+  if (s.phase === 'intro') {
+    return `${head}
+      <section class="panel study">
+        <p class="eyebrow">${w.progress.needsSimplify ? 'LET’S LOOK AGAIN' : 'NEW WORD'}</p>
+        <h1 class="word-title">${esc(w.word)} <button class="icon-btn" id="speakWord" aria-label="읽어주기">🔊</button></h1>
+        ${w.korean ? `<p class="muted">${esc(w.korean)}</p>` : ''}
+        <p class="definition">${esc(s.simple || w.simpleDefinition || w.definition)}</p>
+        ${w.context ? `<div class="context"><span class="eyebrow">IN YOUR STORY</span><p>${esc(w.context)}</p></div>` : ''}
+        ${w.example ? `<p class="example">${esc(w.example)}</p>` : ''}
+        <div class="button-row">
+          <button class="ghost" id="simplify" ${state.busy ? 'disabled' : ''}>✨ 더 쉽게 설명해 줘</button>
+          <button class="primary" id="toQuiz">이제 떠올려 볼게요 →</button>
+        </div>
+      </section>`;
+  }
+  const modeLabel = srs.MODES[s.mode];
+  let body = '';
+  if (s.mode === 'meaning') {
+    body = `<h1 class="word-title">${esc(w.word)} <button class="icon-btn" id="speakWord">🔊</button></h1>
+      <p class="muted">What does it mean?</p>
+      <div class="options">${s.options.map((o, i) => `<button class="option ${s.answer === o ? 'chosen' : ''}" data-opt="${esc(o)}" ${s.feedback ? 'disabled' : ''}><span>${String.fromCharCode(65 + i)}</span>${esc(o)}</button>`).join('')}</div>`;
+  } else if (s.mode === 'recall') {
+    body = `<p class="definition">${esc(w.definition)}</p>${w.korean ? `<p class="muted">${esc(w.korean)}</p>` : ''}
+      <p class="muted">Which word is this? Say it or type it.</p>
+      <div class="free-answer">
+        <input id="answer" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="type the word" value="${esc(s.answer)}" ${s.feedback ? 'disabled' : ''}>
+        <button class="ghost" id="mic" ${s.feedback ? 'disabled' : ''}>${s.listening ? '● 듣는 중… 누르면 멈춰요' : '🎤 마이크로 말하기'}</button>
+      </div>`;
+  } else if (s.mode === 'spell') {
+    body = `<p class="definition">${esc(w.definition)}</p>${w.korean ? `<p class="muted">${esc(w.korean)}</p>` : ''}
+      <p class="muted">Listen and write the word. <button class="icon-btn" id="speakWord">🔊</button> <span class="letters">${'_ '.repeat(w.word.length)}</span></p>
+      <div class="free-answer"><input id="answer" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="write the word" value="${esc(s.answer)}" ${s.feedback ? 'disabled' : ''}></div>`;
+  } else if (s.mode === 'explain') {
+    body = `<h1 class="word-title">${esc(w.word)} <button class="icon-btn" id="speakWord">🔊</button></h1>
+      <p class="muted">Tell me what it means, in your own words.</p>
+      <div class="free-answer">
+        <textarea id="answer" rows="3" placeholder="It means…" ${s.feedback ? 'disabled' : ''}>${esc(s.answer)}</textarea>
+        <button class="ghost" id="mic" ${s.feedback ? 'disabled' : ''}>${s.listening ? '● 듣는 중… 누르면 멈춰요' : '🎤 마이크로 말하기'}</button>
+      </div>
+      ${ai.getKey() ? '' : '<p class="info-line">AI가 연결되지 않아 부모님이 확인해 주세요.</p>'}`;
+  }
+  const hint = s.hinted && !s.feedback ? `<div class="hint-box">💡 ${s.mode === 'meaning' ? esc(w.example) : esc(w.word.slice(0, 1)) + '… ' + esc(w.example)}</div>` : '';
+  const fb = s.feedback ? `<div class="feedback ${s.feedback.correct ? 'success' : 'retry'}" role="status">
+      <b>${s.feedback.correct ? 'Nice one! ✦' : 'Not yet — let’s look again.'}</b>
+      <p>${esc(s.feedback.text || '')}</p>
+      ${!s.feedback.correct ? `<p class="muted"><b>${esc(w.word)}</b> — ${esc(w.definition)}</p>` : ''}
+      <button class="primary" id="next">${s.index + 1 < s.queue.length ? '다음 →' : '마무리'}</button></div>` : '';
+  const actions = s.feedback ? '' : (s.mode === 'explain' && !ai.getKey()
+    ? `<div class="button-row"><button class="ghost" id="parentNo">다시 설명해 볼까</button><button class="primary" id="parentYes">맞아요 (부모 확인)</button></div>`
+    : `<div class="button-row"><button class="ghost" id="hint" ${s.hinted ? 'disabled' : ''}>힌트</button><button class="primary" id="check" ${state.busy ? 'disabled' : ''}>확인</button></div>`);
+  return `${head}<section class="panel study">
+    <p class="eyebrow">${modeLabel.en.toUpperCase()} · ${modeLabel.label}</p>
+    ${body}${hint}${actions}${fb}</section>`;
+}
+function renderSessionEnd() {
+  const r = state.session.results, ok = r.filter(x => x.correct).length;
+  const mastered = r.filter(x => x.mastered).length;
+  return `<section class="panel study center">
+    <p class="eyebrow">ALL DONE</p>
+    <h1>오늘의 기억 돌보기 끝!</h1>
+    <p class="muted">${r.length}개 중 ${ok}개를 떠올렸어요.${mastered ? ` 구슬 ${mastered}개가 기억 보관소로 굴러갔어요 ✦` : ''}</p>
+    <div class="orbit-stage small">${r.slice(0, 5).map((x, i) => `<div class="orbit-pos p${i}">${orb(state.words.find(w => w.id === x.wordId), i)}</div>`).join('')}</div>
+    <p class="muted">내일 다시 만나면 기억이 더 선명해져요.</p>
+    <button class="primary big" id="endSession">홈으로</button>
+  </section>`;
+}
+function bindSession() {
+  const s = state.session;
+  const q = $('#quitSession'); if (q) q.onclick = () => { state.session = null; render(); };
+  const e = $('#endSession'); if (e) e.onclick = () => { state.session = null; state.route = 'home'; render(); };
+  if (s.index >= s.queue.length) return;
+  const w = currentWord();
+  const sp = $('#speakWord'); if (sp) sp.onclick = () => speak(w.word);
+  if (s.phase === 'intro') {
+    $('#toQuiz').onclick = () => { s.phase = 'quiz'; render(); };
+    $('#simplify').onclick = async () => {
+      if (!ai.getKey()) { toast('부모 리포트에서 Gemini API 키를 연결하면 사용할 수 있어요.'); return; }
+      state.busy = true; render();
+      try {
+        const r = await ai.simplify({ key: ai.getKey(), word: w.word, definition: w.definition, context: w.context, age: state.profile.age, level: state.profile.level });
+        s.simple = r.definition || ''; w.simpleDefinition = s.simple; await db.putWord(w);
+      } catch (err) { toast(err.message, 'error'); }
+      state.busy = false; render();
+    };
+    return;
+  }
+  document.querySelectorAll('.option').forEach(b => b.onclick = () => { s.answer = b.dataset.opt; render(); });
+  const inp = $('#answer'); if (inp) { inp.oninput = e => { s.answer = e.target.value; }; inp.onkeydown = e => { if (e.key === 'Enter' && s.mode !== 'explain') { e.preventDefault(); check(); } }; if (!s.feedback) inp.focus(); }
+  const mic = $('#mic'); if (mic) mic.onclick = () => {
+    if (s.rec) { s.rec.stop(); s.rec = null; s.listening = false; render(); return; }
+    s.rec = listen(t => { s.answer = t; s.listening = false; s.rec = null; render(); }, () => { s.listening = false; s.rec = null; render(); });
+    if (s.rec) { s.listening = true; s.rec.onend = () => { s.listening = false; s.rec = null; render(); }; render(); }
+  };
+  const h = $('#hint'); if (h) h.onclick = () => { s.hinted = true; render(); };
+  const c = $('#check'); if (c) c.onclick = check;
+  const py = $('#parentYes'); if (py) py.onclick = () => finish(true, 'Great explanation!');
+  const pn = $('#parentNo'); if (pn) pn.onclick = () => finish(false, 'Let’s read the meaning once more.');
+  const n = $('#next'); if (n) n.onclick = () => { s.index += 1; prepareItem(); render(); };
+
+  async function check() {
+    if (!s.answer.trim()) { toast('답을 먼저 골라 주세요.'); return; }
+    if (s.mode === 'meaning') return finish(s.answer.trim() === w.definition.trim());
+    if (s.mode === 'recall' || s.mode === 'spell') return finish(srs.normalize(s.answer) === srs.normalize(w.word));
+    if (s.mode === 'explain') {
+      state.busy = true; render();
+      try {
+        const r = await ai.gradeExplain({ key: ai.getKey(), word: w.word, definition: w.definition, answer: s.answer, age: state.profile.age });
+        state.busy = false; return finish(!!r.correct, r.feedback || '');
+      } catch (err) { state.busy = false; toast(err.message + ' 부모님이 확인해 주세요.', 'error'); ai.setKey(ai.getKey()); render(); }
+    }
+  }
+  async function finish(correct, text = '') {
+    const today = srs.todayKey();
+    const before = w.progress;
+    w.progress = srs.applyResult(before, s.mode, correct, s.hinted, today);
+    await db.putWord(w);
+    const rec = { id: db.uid(), profileId: state.profile.id, wordId: w.id, mode: s.mode, correct, hinted: s.hinted, date: today, gapDays: before.lastReviewed ? srs.daysBetween(before.lastReviewed, today) : 0 };
+    await db.putReview(rec); state.reviews.push(rec);
+    const mastered = !before.mastered && w.progress.mastered;
+    s.results.push({ wordId: w.id, correct, mastered });
+    s.feedback = { correct, text: text || (correct ? (mastered ? 'This word is now in your memory room ✦' : 'You remembered it!') : '') };
+    // 뜻을 혼동한 단어는 몇 문제 뒤에 다시 만난다 (오늘 안에)
+    if (!correct && s.mode === 'meaning' && !s.queue.slice(s.index + 1).some(q => q.id === w.id)) {
+      s.queue.splice(Math.min(s.queue.length, s.index + 3), 0, { id: w.id, intro: false });
+    }
+    if (correct) speak(w.word);
+    render();
+  }
+}
+
+// ---------- 단어 추가 ----------
+const add = { tab: 'photo', image: null, preview: '', text: '', found: [], note: '', manual: {}, sentences: [], picked: new Set() };
+function renderAdd() {
+  const key = ai.getKey();
+  const tabs = [['photo', '📷 사진'], ['text', '✎ 문장 붙여넣기'], ['manual', '＋ 직접 입력']];
+  let body = '';
+  if (add.tab === 'photo') body = `
+    <p class="muted">책이나 과제에서 형광펜·밑줄·플래그로 표시한 단어를 사진 한 장으로 모아요. 사진은 추출 후 보관하지 않아요.</p>
+    ${key ? '' : '<p class="info-line">사진 읽기는 부모 리포트에서 Gemini API 키(무료)를 연결한 뒤 사용할 수 있어요. 지금은 직접 입력으로 추가할 수 있어요.</p>'}
+    <div class="photo-box">${add.preview ? `<img src="${add.preview}" alt="">` : '<span>사진을 고르거나 찍어 주세요</span>'}</div>
+    <div class="button-row">
+      <label class="btn ghost">사진 선택 <input type="file" id="photo" accept="image/*" capture="environment" hidden></label>
+      <button class="primary" id="extract" ${!add.image || state.busy || !key ? 'disabled' : ''}>${state.busy ? '읽는 중…' : '✨ 표시한 단어 찾기'}</button>
+      <button class="ghost" id="extractPage" ${!add.image || state.busy || !key ? 'disabled' : ''}>📖 페이지 글 가져와서 탭하기</button>
+      <button class="ghost" id="extractPoint" ${!add.image || state.busy || !key ? 'disabled' : ''}>☝ 손가락으로 가리킨 단어</button>
+    </div>
+    ${state.busy ? `<p class="muted small" id="aiProgress">${esc(state.progress)}</p>` : '<p class="muted small">형광펜·플래그 프린트물은 "표시한 단어 찾기". 표시 못 하는 도서관 책은 "페이지 글 가져와서 탭하기"로 모르는 단어를 직접 골라요.</p>'}`;
+  else if (add.tab === 'text') body = `
+    <p class="muted">문장을 붙여넣으세요. 아이가 표시한 단어는 *별표*로 감싸면 그 단어만 찾아요. 표시가 없으면 어려운 단어를 골라줘요.</p>
+    ${key ? '' : '<p class="info-line">문장 분석은 Gemini API 키 연결 후 사용할 수 있어요.</p>'}
+    <textarea id="text" rows="6" placeholder="The *enormous* elephant walked slowly to the river.">${esc(add.text)}</textarea>
+    <div class="button-row"><button class="primary" id="extractText" ${state.busy || !key ? 'disabled' : ''}>${state.busy ? '읽는 중…' : '✨ 표시한 단어 찾기'}</button></div>`;
+  else body = `
+    <div class="form-grid">
+      <label>단어 (영어)<input id="m-word" value="${esc(add.manual.word || '')}" placeholder="enormous"></label>
+      <label>한국어 뜻<input id="m-korean" value="${esc(add.manual.korean || '')}" placeholder="거대한"></label>
+      <label class="wide">쉬운 영어 뜻<input id="m-def" value="${esc(add.manual.definition || '')}" placeholder="very, very big"></label>
+      <label class="wide">책에서 본 문장<input id="m-ctx" value="${esc(add.manual.context || '')}" placeholder="An enormous elephant walked to the river."></label>
+      <label>주제<select id="m-topic">${TOPICS.map(t => `<option value="${t.id}">${t.name}</option>`).join('')}</select></label>
+    </div>
+    <p class="muted small">오답 보기는 다른 단어의 뜻에서 자동으로 만들어요.</p>
+    <div class="button-row"><button class="primary" id="addManual">단어 추가</button></div>`;
+  const pickedArr = [...add.picked];
+  const foundWords = new Set(add.found.map(f => f.word.toLowerCase()));
+  const page = add.sentences.length ? `<section class="panel">
+    <div class="row between wrap"><h3>페이지에서 모르는 단어 탭하기</h3>
+      <button class="primary" id="definePicked" ${!pickedArr.length || state.busy ? 'disabled' : ''}>${state.busy ? '읽는 중…' : `고른 단어 ${pickedArr.length}개 뜻 만들기`}</button></div>
+    <p class="muted small">단어를 탭하면 골라져요. 다시 탭하면 취소.</p>
+    <div class="page-text">${add.sentences.map(sen => `<p>${sen.split(/(\s+)/).map(tok => {
+      const w = tok.toLowerCase().replace(/[^a-z'-]/g, '');
+      if (!w || /^\s+$/.test(tok)) return esc(tok);
+      const on = add.picked.has(w), had = foundWords.has(w);
+      return `<span class="tapword ${on ? 'on' : ''} ${had ? 'had' : ''}" data-w="${esc(w)}">${esc(tok)}</span>`;
+    }).join('')}</p>`).join('')}</div>
+  </section>` : '';
+  const found = add.found.length ? `<section class="panel">
+    <div class="row between"><h3>찾은 단어 ${add.found.length}개</h3><button class="primary" id="addFound">선택한 단어 추가</button></div>
+    ${add.note ? `<p class="info-line">${esc(add.note)}</p>` : '<p class="muted">표시한 단어와 문맥에 맞는 뜻인지 확인해 주세요. 뜻은 고칠 수 있어요.</p>'}
+    ${add.found.map((f, i) => `<div class="found ${f.checked ? '' : 'off'}">
+      <label class="chk"><input type="checkbox" data-i="${i}" ${f.checked ? 'checked' : ''}><b>${esc(f.word)}</b> <span class="muted">${esc(f.korean || '')}</span></label>
+      <input data-def="${i}" value="${esc(f.definition)}">
+      ${f.context ? `<p class="muted small">“${esc(f.context)}”</p>` : ''}
+    </div>`).join('')}</section>` : '';
+  return `<p class="eyebrow">COLLECT</p><h1>단어 추가하기</h1>
+    <div class="tabs">${tabs.map(([id, l]) => `<button class="tab ${add.tab === id ? 'active' : ''}" data-tab="${id}">${l}</button>`).join('')}</div>
+    <section class="panel">${body}</section>${found}${page}
+    ${state.words.length < 8 ? `<p class="muted center"><button class="text-link" id="addSamples">예시 단어 8개로 체험하기</button></p>` : ''}`;
+}
+function bindAdd() {
+  document.querySelectorAll('.tab').forEach(b => b.onclick = () => { add.tab = b.dataset.tab; render(); });
+  const ph = $('#photo'); if (ph) ph.onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    if (f.size > 2e7) { toast('20MB 이하의 사진을 선택해 주세요.', 'error'); return; }
+    try { const r = await ai.fileToBase64(f); add.image = r; add.imageFile = f; add.preview = r.preview; add.found = []; add.sentences = []; add.picked = new Set(); render(); } catch (err) { toast(err.message, 'error'); }
+  };
+  const imgOpts = () => ({ key: ai.getKey(), imageBase64: add.image.base64, mime: add.image.mime, age: state.profile.age, level: state.profile.level });
+  const setProgress = m => { state.progress = m; const el = document.getElementById('aiProgress'); if (el) el.textContent = m; };
+  // 본문 읽기: 기기 안 OCR(무료·빠름) → 실패하면 AI로
+  const readPage = async () => {
+    try { const s = await pageSentences(add.imageFile || add.image.preview, setProgress); if (s.length >= 2) return { sentences: s, note: '' }; } catch (e) { console.warn('OCR 실패, AI로 대체', e); }
+    setProgress('AI로 본문을 읽는 중…');
+    const pg = await ai.analyzePage({ ...imgOpts(), mode: 'page' });
+    return { sentences: pg.sentences || [], note: pg.note || '' };
+  };
+  const ex = $('#extract'); if (ex) ex.onclick = () => runExtract(async () => {
+    const r = await ai.analyzePage({ ...imgOpts(), mode: 'auto' });
+    if (!(r.words || []).length) { // 표시가 없으면 본문을 읽어 탭 모드로
+      const pg = await readPage();
+      return { words: [], sentences: pg.sentences, note: r.note || pg.note || '' };
+    }
+    return r;
+  });
+  const exg = $('#extractPage'); if (exg) exg.onclick = () => runExtract(readPage, 'page');
+  const exp = $('#extractPoint'); if (exp) exp.onclick = () => runExtract(() => ai.analyzePage({ ...imgOpts(), mode: 'point' }));
+  document.querySelectorAll('.tapword').forEach(el => el.onclick = () => { const w = el.dataset.w; add.picked.has(w) ? add.picked.delete(w) : add.picked.add(w); render(); });
+  const dp = $('#definePicked'); if (dp) dp.onclick = async () => {
+    state.busy = true; render();
+    try {
+      const r = await ai.defineWords({ key: ai.getKey(), words: [...add.picked], sentences: add.sentences, age: state.profile.age, level: state.profile.level });
+      const got = (r.words || []).filter(x => x.word && x.definition).map(x => ({ ...x, checked: true, distractors: Array.isArray(x.distractors) ? x.distractors : [] }));
+      const have = new Set(add.found.map(f => f.word.toLowerCase()));
+      add.found.push(...got.filter(g => !have.has(g.word.toLowerCase())));
+      add.picked.clear();
+      if (!got.length) toast('뜻을 만들지 못했어요. 다시 시도해 주세요.');
+    } catch (err) { toast(err.message, 'error'); }
+    state.busy = false; render();
+  };
+  const tx = $('#text'); if (tx) tx.oninput = e => { add.text = e.target.value; };
+  const et = $('#extractText'); if (et) et.onclick = () => { if (!add.text.trim()) return toast('문장을 먼저 붙여넣어 주세요.'); runExtract(() => ai.extractFromText({ key: ai.getKey(), text: add.text, age: state.profile.age, level: state.profile.level })); };
+  document.querySelectorAll('input[data-i]').forEach(c => c.onchange = () => { add.found[c.dataset.i].checked = c.checked; render(); });
+  document.querySelectorAll('input[data-def]').forEach(c => c.oninput = () => { add.found[c.dataset.def].definition = c.value; });
+  const af = $('#addFound'); if (af) af.onclick = async () => {
+    const n = await addWords(add.found.filter(f => f.checked), add.tab);
+    toast(n ? `${n}개 단어를 추가했어요.` : '새로 추가된 단어가 없어요 (이미 있는 단어).', n ? 'success' : 'info');
+    add.found = []; add.image = null; add.preview = ''; add.text = ''; add.sentences = []; add.picked = new Set(); render();
+  };
+  const am = $('#addManual'); if (am) am.onclick = async () => {
+    const w = { word: $('#m-word').value, korean: $('#m-korean').value, definition: $('#m-def').value, context: $('#m-ctx').value, topic: $('#m-topic').value, distractors: [] };
+    if (!w.word.trim() || !w.definition.trim()) return toast('단어와 영어 뜻은 꼭 필요해요.');
+    const n = await addWords([w]); toast(n ? `“${w.word}”를 추가했어요.` : '이미 있는 단어예요.', n ? 'success' : 'info'); add.manual = {}; render();
+  };
+  const as = $('#addSamples'); if (as) as.onclick = async () => { const n = await addWords(SAMPLE_WORDS, 'sample'); toast(`예시 단어 ${n}개를 넣었어요.`, 'success'); render(); };
+  async function runExtract(fn, kind = 'words') {
+    state.busy = true; state.progress = '사진을 보내는 중…'; render();
+    try {
+      const r = await fn();
+      const words = (r.words || []).filter(x => x.word && x.definition).map(x => ({ ...x, checked: true, distractors: Array.isArray(x.distractors) ? x.distractors : [] }));
+      if (kind === 'page') { // 본문만 갱신, 이미 찾은 단어는 유지
+        add.sentences = Array.isArray(r.sentences) ? r.sentences.filter(x => typeof x === 'string' && x.trim()) : [];
+        if (!add.sentences.length) toast('글을 읽지 못했어요. 더 밝은 곳에서 가까이 찍어 보세요.');
+      } else {
+        add.found = words; add.note = r.note || '';
+        add.sentences = Array.isArray(r.sentences) ? r.sentences.filter(x => typeof x === 'string' && x.trim()) : [];
+        if (!add.found.length) toast(add.sentences.length ? '표시된 단어가 없어서 페이지 글을 가져왔어요. 모르는 단어를 탭해 보세요.' : '단어를 찾지 못했어요. 더 밝은 곳에서 가까이 찍어 보세요.');
+      }
+      add.picked = new Set();
+    } catch (err) { toast(err.message, 'error'); }
+    state.busy = false; state.progress = ''; render();
+  }
+}
+
+// ---------- 나의 단어 / 상세 ----------
+const wordsView = { filter: 'all' };
+function renderWords() {
+  const list = state.words.filter(w => wordsView.filter === 'all' || srs.stage(w.progress) === wordsView.filter)
+    .sort((a, b) => (b.created || '').localeCompare(a.created || ''));
+  const f = [['all', '전체'], ['new', '새로운 발견'], ['growing', '키우는 중'], ['mastered', '오래 기억']];
+  return `<p class="eyebrow">MY WORD UNIVERSE</p><div class="row between"><h1>나의 단어 <span class="muted">${state.words.length}</span></h1><a href="#add" class="btn primary">＋ 추가</a></div>
+    <div class="tabs">${f.map(([id, l]) => `<button class="tab ${wordsView.filter === id ? 'active' : ''}" data-f="${id}">${l}</button>`).join('')}</div>
+    ${list.length ? `<div class="orb-grid">${list.map((w, i) => `<div class="orb-card" data-word="${w.id}">${orb(w, i, true)}<div><b>${esc(w.word)}</b><span class="muted">${esc(w.korean || w.definition)}</span><small>${w.progress.attempts ? `다음 복습 ${fmtDate(w.progress.due)}` : '아직 만나지 않음'}</small></div></div>`).join('')}</div>` : '<section class="panel"><p class="muted center">아직 단어가 없어요.</p></section>'}`;
+}
+function bindWords() {
+  document.querySelectorAll('.tab').forEach(b => b.onclick = () => { wordsView.filter = b.dataset.f; render(); });
+  document.querySelectorAll('.orb-card').forEach(el => el.onclick = () => openWord(el.dataset.word));
+}
+function openWord(id) {
+  const w = state.words.find(x => x.id === id); if (!w) return;
+  const p = w.progress, t = p.tracks;
+  const dlg = $('#dialog');
+  dlg.innerHTML = `<div class="dlg">
+    <div class="row between"><h2>${esc(w.word)} <button class="icon-btn" id="d-speak">🔊</button></h2><button class="icon-btn" id="d-close">✕</button></div>
+    <p class="muted">${esc(w.korean)}</p>
+    <label>영어 뜻<input id="d-def" value="${esc(w.definition)}"></label>
+    <label>책에서 본 문장<input id="d-ctx" value="${esc(w.context)}"></label>
+    <label>예문<input id="d-ex" value="${esc(w.example)}"></label>
+    <div class="track-grid">
+      <div><span>뜻 이해</span><b>${t.meaning.ok}✓ ${t.meaning.miss}✗</b></div>
+      <div><span>떠올리기</span><b>${t.recall.ok}✓ ${t.recall.miss}✗</b></div>
+      <div><span>철자</span><b>${t.spell.ok}✓ ${t.spell.miss}✗</b></div>
+      <div><span>설명</span><b>${t.explain.ok}✓ ${t.explain.miss}✗</b></div>
+    </div>
+    <p class="muted small">단계 ${srs.stage(p) === 'new' ? '새로운 발견' : srs.stage(p) === 'growing' ? '기억을 키우는 중' : '오래 기억하는 단어'} · ${p.attempts ? `다음 복습 ${fmtDate(p.due)} (간격 ${srs.INTERVALS[p.step]}일)` : '아직 학습 전'} · 힌트 없이 떠올린 날 ${[...new Set(p.hintFreeDays)].length}일</p>
+    <div class="button-row"><button class="ghost danger" id="d-del">삭제</button><button class="primary" id="d-save">저장</button></div></div>`;
+  dlg.hidden = false;
+  $('#d-close').onclick = () => { dlg.hidden = true; };
+  $('#d-speak').onclick = () => speak(w.word);
+  $('#d-save').onclick = async () => { w.definition = $('#d-def').value; w.context = $('#d-ctx').value; w.example = $('#d-ex').value; await db.putWord(w); dlg.hidden = true; toast('저장했어요.', 'success'); render(); };
+  $('#d-del').onclick = async () => { if (!confirm(`“${w.word}”를 삭제할까요? 학습 기록도 함께 지워져요.`)) return; await db.deleteWord(w.id); state.words = state.words.filter(x => x.id !== w.id); dlg.hidden = true; render(); };
+}
+
+// ---------- 기억 보관소 ----------
+function renderMemory() {
+  const m = state.words.filter(w => w.progress.mastered).sort((a, b) => (b.progress.masteredAt || '').localeCompare(a.progress.masteredAt || ''));
+  const g = state.words.filter(w => srs.stage(w.progress) === 'growing').sort((a, b) => b.progress.step - a.progress.step).slice(0, 6);
+  return `<p class="eyebrow">MEMORY ROOM</p><h1>기억 보관소</h1>
+    <p class="muted">여러 날에 걸쳐 힌트 없이 떠올린 단어가 여기로 굴러와요. 가끔 다시 꺼내 보지만, 잊었다고 구슬을 빼앗지는 않아요.</p>
+    <section class="panel hero">
+      ${m.length ? `<div class="orb-grid">${m.map((w, i) => `<div class="orb-card" data-word="${w.id}">${orb(w, i, true)}<div><b>${esc(w.word)}</b><span class="muted">${esc(w.korean || w.definition)}</span><small>${fmtDate(w.progress.masteredAt)}부터</small></div></div>`).join('')}</div>`
+        : `<p class="muted center">아직 보관소에 온 구슬이 없어요.<br>같은 단어를 3일 이상, 일주일 넘게 힌트 없이 떠올리면 여기로 와요.</p>`}
+    </section>
+    ${g.length ? `<h3>곧 굴러올 구슬</h3><div class="orb-grid">${g.map((w, i) => `<div class="orb-card" data-word="${w.id}">${orb(w, i + 2, true)}<div><b>${esc(w.word)}</b><small>힌트 없이 ${[...new Set(w.progress.hintFreeDays)].length}일 · 간격 ${srs.INTERVALS[w.progress.step]}일</small></div></div>`).join('')}</div>` : ''}
+    <section class="panel soft"><h3>복습 원리</h3><p class="muted">시간 간격을 두고, 답을 보지 않은 채 다시 떠올리는 연습이 장기 기억에 도움이 돼요. 이 앱은 1일 → 3일 → 1주 → 2주 → 1달 → 2달 간격으로 시작해서, 아이의 답에 따라 단어마다 간격을 조절해요.</p></section>`;
+}
+function bindMemory() { document.querySelectorAll('.orb-card').forEach(el => el.onclick = () => openWord(el.dataset.word)); }
+
+// ---------- 책 ----------
+function renderBooks() {
+  const p = state.profile;
+  const { cards, signals } = recommend(p, state.words);
+  const rx = p.bookReactions || {};
+  return `<p class="eyebrow">THE NEXT CHAPTER</p><h1>다음에 읽을 책</h1>
+    <p class="muted">믿을 수 있는 선정 목록에서, 나의 관심사로 이어지는 이야기.</p>
+    <section class="panel"><b>좋아하는 주제</b> <span class="muted small">(아이가 직접 고르기)</span>
+      <div class="chips">${TOPICS.filter(t => t.id !== 'other').map(t => `<button class="chip ${(p.interests || []).includes(t.id) ? 'on' : ''}" data-topic="${t.id}">${t.name}</button>`).join('')}</div>
+      ${signals.learning.length ? `<p class="muted small">최근 학습 주제: ${signals.learning.map(t => TOPICS.find(x => x.id === t)?.name || t).join(', ')} (보조로만 반영)</p>` : ''}
+    </section>
+    ${cards.map(c => `<section class="panel book">
+      <p class="eyebrow">${c.slot}</p>
+      <h2>${esc(c.book.title)}</h2><p class="muted">${esc(c.book.author)}</p>
+      <div class="badges"><span class="badge src">${c.book.source} · ${esc(c.book.award)} · ${c.book.year}</span><span class="badge">${{ easy: '혼자 읽기', medium: '조금 도전', challenge: '함께 읽기' }[c.book.level]}</span></div>
+      ${c.reason ? `<p><b>우리 아이에게:</b> ${esc(c.reason)}</p>` : ''}
+      <p class="muted">${esc(c.book.note)}</p>
+      ${c.reviewWords.length ? `<p class="muted small">배운 단어와 같은 주제: ${c.reviewWords.join(', ')}</p>` : ''}
+      <div class="button-row">
+        <button class="ghost" data-react="skip" data-title="${esc(c.book.title)}">다른 책 볼래요</button>
+        <button class="${rx[c.book.title] === 'want' ? 'primary' : 'ghost'}" data-react="want" data-title="${esc(c.book.title)}">읽고 싶어요</button>
+        <button class="ghost" data-react="liked" data-title="${esc(c.book.title)}">읽었어요 · 재미있었어요</button>
+        <button class="ghost" data-react="hard" data-title="${esc(c.book.title)}">읽었어요 · 어려웠어요</button>
+      </div></section>`).join('')}
+    <section class="panel soft"><h3>선정 출처</h3>${Object.values(SOURCES).map(s => `<p><a href="${s.url}" target="_blank" rel="noopener">${esc(s.name)}</a> — ${esc(s.note)}</p>`).join('')}
+      <p class="muted small">이 목록은 기관이 선정한 책을 정리한 것이며, 기관이 이 앱을 인증한 것은 아니에요.</p></section>`;
+}
+function bindBooks() {
+  document.querySelectorAll('.chip').forEach(b => b.onclick = async () => {
+    const set = new Set(state.profile.interests || []); set.has(b.dataset.topic) ? set.delete(b.dataset.topic) : set.add(b.dataset.topic);
+    await saveProfile({ interests: [...set] }); render();
+  });
+  document.querySelectorAll('[data-react]').forEach(b => b.onclick = async () => {
+    const rx = { ...(state.profile.bookReactions || {}) }; rx[b.dataset.title] = b.dataset.react;
+    await saveProfile({ bookReactions: rx }); toast({ skip: '다른 책을 보여드릴게요.', want: '읽고 싶은 책으로 표시했어요.', liked: '재미있었다니 기뻐요! 비슷한 책을 더 찾아볼게요.', hard: '조금 쉬운 책을 골라볼게요.' }[b.dataset.react], 'success'); render();
+  });
+}
+
+// ---------- 부모 리포트 ----------
+function renderParents() {
+  const p = state.profile, sum = srs.summarize(state.words, state.reviews);
+  const key = ai.getKey();
+  return `<p class="eyebrow">FOR PARENTS</p><h1>부모 리포트 · ${esc(p.name)}</h1>
+    <section class="panel">
+      <h3>기억 유지 상태</h3>
+      <div class="stat-grid">
+        <div><b>${sum.total}</b><span>등록한 단어</span></div>
+        <div><b>${sum.byStage.mastered}</b><span>오래 기억하는 단어</span></div>
+        <div><b>${sum.recallRate === null ? '–' : sum.recallRate + '%'}</b><span>하루 이상 지난 뒤 힌트 없이 떠올린 비율</span></div>
+        <div><b>${sum.usedInSentence}</b><span>내 말로 설명한 단어</span></div>
+        <div><b>${sum.activeDays}일</b><span>최근 7일 학습한 날</span></div>
+        <div><b>${sum.upcoming}</b><span>앞으로 7일 복습 예정</span></div>
+      </div>
+      ${sum.overdue ? `<p class="info-line">밀린 복습 ${sum.overdue}개 — 앱이 하루 예산만큼만 나눠서 배치해요.</p>` : ''}
+      ${sum.struggling.length ? `<p><b>자주 혼동하는 단어:</b> ${sum.struggling.map(esc).join(', ')} <span class="muted small">— 다음 학습에서 쉬운 설명부터 보여줘요.</span></p>` : ''}
+      <p class="muted small">이 수치는 앱에서 확인한 기억 유지 상태이며 영구 암기를 보장하는 건 아니에요.</p>
+    </section>
+    <section class="panel">
+      <h3>아이 설정</h3>${profileForm(p)}
+      <label class="chk"><input type="checkbox" id="pf-explain" ${p.allowExplain !== false ? 'checked' : ''}> '뜻 설명하기' 문제 포함 (AI 미연결 시 부모가 확인)</label>
+      <div class="button-row"><button class="primary" id="saveProfile">저장</button></div>
+    </section>
+    <section class="panel">
+      <div class="row between"><h3>AI 연결 (Google Gemini 무료 티어)</h3><span class="pill">${key && ai.getModel() ? `● 연결됨 · ${esc(ai.getModel())}` : '○ 연결 대기'}</span></div>
+      <p class="muted">사진 속 표시 단어 읽기, 더 쉬운 설명, 뜻 설명 채점에만 사용해요. 복습 일정과 퀴즈는 AI 없이 동작해요.</p>
+      <p class="muted small">키는 이 기기 브라우저에만 저장되고, 사진과 답변은 평가할 때 Google로 전송돼요. 원본 사진은 저장하지 않아요. 무료 키 발급: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></p>
+      <div class="form-grid">
+        <label class="wide">Gemini API 키<input id="apikey" type="password" autocomplete="off" placeholder="AQ.… 또는 AIza…" value="${esc(key)}"></label>
+        <label>모델 <span class="muted small">(연결 확인 시 자동 선택)</span><select id="model"><option value="">자동</option>${ai.getModelList().map(m => `<option ${ai.getModel() === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
+      </div>
+      <div class="button-row"><button class="ghost" id="aiDisconnect" ${key ? '' : 'disabled'}>연결 해제</button><button class="primary" id="aiConnect" ${state.busy ? 'disabled' : ''}>${state.busy ? '확인 중…' : '연결 확인'}</button></div>
+    </section>
+    <section class="panel">
+      <h3>데이터</h3>
+      <p class="muted">모든 기록은 이 기기에만 있어요. 기기를 바꾸거나 백업하려면 내보내기 파일을 저장해 두세요.</p>
+      <div class="button-row">
+        <button class="ghost" id="exportData">백업 내보내기</button>
+        <label class="btn ghost">백업 가져오기 <input type="file" id="importData" accept="application/json" hidden></label>
+        <button class="ghost" id="addProfile">아이 프로필 추가</button>
+        <button class="ghost danger" id="deleteProfile">이 프로필 삭제</button>
+      </div>
+    </section>`;
+}
+function bindParents() {
+  $('#saveProfile').onclick = async () => { await saveProfile({ ...readProfileForm(), allowExplain: $('#pf-explain').checked }); toast('저장했어요.', 'success'); render(); };
+  $('#aiConnect').onclick = async () => {
+    const k = $('#apikey').value.trim(); const m = $('#model').value;
+    if (!k) return toast('API 키를 입력해 주세요.');
+    state.busy = true; render();
+    try { const chosen = await ai.testConnection({ key: k, model: m }); ai.setKey(k); toast(`AI를 연결했어요 (${chosen}). 이제 사진으로 단어를 추가할 수 있어요.`, 'success'); }
+    catch (err) { toast(err.message, 'error'); }
+    state.busy = false; render();
+  };
+  $('#aiDisconnect').onclick = () => { ai.setKey(''); toast('연결을 해제했어요.'); render(); };
+  $('#exportData').onclick = async () => {
+    const data = await db.exportAll();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `word-orbit-backup-${srs.todayKey()}.json`; a.click();
+  };
+  $('#importData').onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { await db.importAll(JSON.parse(await f.text())); await loadProfile(); toast('백업을 가져왔어요.', 'success'); render(); } catch (err) { toast(err.message, 'error'); }
+  };
+  $('#addProfile').onclick = async () => {
+    const name = prompt('아이 이름'); if (!name) return;
+    const p = { id: db.uid(), created: new Date().toISOString(), name, age: 7, level: 'beginner', minutes: 10, newPerDay: 3, interests: [], bookReactions: {}, allowExplain: true };
+    await db.putProfile(p); await loadProfile(p.id); state.route = 'parents'; render();
+  };
+  $('#deleteProfile').onclick = async () => {
+    if (state.profiles.length < 2) return toast('마지막 프로필은 삭제할 수 없어요.');
+    if (!confirm(`${state.profile.name}의 프로필과 단어, 기록을 모두 삭제할까요?`)) return;
+    for (const w of state.words) await db.deleteWord(w.id);
+    await db.deleteProfile(state.profile.id); await loadProfile(); render();
+  };
+}
+
+// ---------- 시작 ----------
+function router() {
+  const r = location.hash.replace('#', '') || 'home';
+  state.route = ['home', 'add', 'words', 'memory', 'books', 'parents'].includes(r) ? r : 'home';
+  state.session = null; render();
+}
+window.addEventListener('hashchange', router);
+(async () => {
+  try {
+    await loadProfile();
+    router();
+    window.__woBooted = true; clearTimeout(window.__woBootTimer);
+    if ('serviceWorker' in navigator && location.protocol.startsWith('http') && location.hostname !== 'localhost') navigator.serviceWorker.register('./sw.js').catch(() => {});
+  } catch (err) { (window.__woShowError || alert)(err && err.message ? err.message : String(err)); }
+})();
