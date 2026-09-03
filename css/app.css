@@ -280,3 +280,22 @@ label input, label select { margin-top: 4px; }
 
 /* iOS: 입력칸 탭 시 화면 확대 방지 (16px 미만이면 확대됨) */
 @media (max-width: 760px) { input, select, textarea { font-size: 16px; } .onboard.compact-form input, .onboard.compact-form select { font-size: 16px; } .free-answer input { font-size: 1.25rem; } }
+
+/* 사진 → 단어 단계식 화면 */
+.steps { display: flex; gap: 6px; margin-bottom: 12px; }
+.steps .step { flex: 1; display: flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--muted); background: var(--soft); border-radius: 999px; padding: 6px 10px; white-space: nowrap; }
+.steps .step span { width: 20px; height: 20px; border-radius: 50%; background: #fff; display: grid; place-items: center; font-weight: 700; font-size: .72rem; }
+.steps .step.on { background: var(--accent); color: #fff; } .steps .step.on span { background: #fff; color: var(--accent); }
+.steps .step.done { color: var(--accent); } .steps .step.done span { background: var(--accent-2); color: #fff; }
+.big-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0; }
+.big-choice { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 22px 10px; border: 2px dashed var(--accent-2); border-radius: 18px; background: #fff; cursor: pointer; text-align: center; color: var(--ink); }
+.big-choice:active { background: var(--soft); }
+.big-choice .big-ic { font-size: 2.2rem; } .big-choice b { font-size: 1rem; } .big-choice small { color: var(--muted); font-size: .75rem; }
+.center-row { justify-content: center; }
+.progress-line { text-align: center; color: var(--accent); font-size: .9rem; margin: 6px 0; }
+.photo-thumb { display: flex; align-items: center; gap: 12px; } .photo-thumb img { width: 72px; height: 72px; object-fit: cover; border-radius: 12px; }
+.tap-panel { padding-bottom: 0; overflow: hidden; }
+.tap-panel .page-text { font-size: 1.15rem; line-height: 2.1; max-height: 50vh; }
+.tap-panel .tapword { padding: 3px 5px; border-radius: 8px; }
+.sticky-bar { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; margin: 10px -20px 0; padding-left: 20px; padding-right: 20px; background: rgba(255,255,255,.96); border-top: 1px solid var(--line); }
+@media (max-width: 480px) { .steps .step { font-size: .7rem; padding: 6px 8px; } .steps .step:not(.on) { flex: 0 0 auto; } .steps .step:not(.on) { font-size: 0; gap: 0; } .steps .step:not(.on) span { font-size: .72rem; } .big-choices { grid-template-columns: 1fr 1fr; } }

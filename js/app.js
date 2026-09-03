@@ -251,6 +251,7 @@ function prepareItem() {
   const w = currentWord();
   s.answer = ''; s.hinted = false; s.feedback = null; s.simple = ''; s.simpleKo = ''; s.listening = false; s.spokenFor = '';
   if (item.intro || w.progress.needsSimplify) { s.phase = 'intro'; s.mode = 'meaning'; }
+  else if (item.practice) { s.phase = 'quiz'; const last = w.progress.lastResult?.mode; s.mode = last === 'meaning' ? 'recall' : last === 'recall' ? 'spell' : 'meaning'; }
   else { s.phase = 'quiz'; s.mode = srs.pickMode(w.progress, { allowExplain: state.profile.allowExplain !== false }); }
   if (s.mode === 'meaning') {
     let d = (w.distractors || []).filter(Boolean);
@@ -334,13 +335,22 @@ function renderSessionEnd() {
     <p class="muted">${r.length}개 중 ${ok}개를 떠올렸어요.${mastered ? ` 구슬 ${mastered}개가 기억 보관소로 굴러갔어요 ✦` : ''}</p>
     <div class="orbit-stage small">${r.slice(0, 5).map((x, i) => `<div class="orbit-pos p${i}">${orb(state.words.find(w => w.id === x.wordId), i)}</div>`).join('')}</div>
     <p class="muted">내일 다시 만나면 기억이 더 선명해져요.</p>
-    <button class="primary big" id="endSession">홈으로</button>
+    ${extraRoundItems().length ? `<button class="primary big" id="moreSession">✨ 조금 더 할래요 (${extraRoundItems().length}개)</button><button class="ghost big" id="endSession">홈으로</button>` : `<button class="primary big" id="endSession">홈으로</button>`}
   </section>`;
+}
+// 세션이 끝난 뒤 "조금 더": 아직 안 만난 새 단어 + 오늘 한 단어를 다른 유형으로 한 번 더 (일정은 바꾸지 않는 연습)
+function extraRoundItems() {
+  const s = state.session; if (!s) return [];
+  const doneIds = new Set(s.queue.map(q => q.id));
+  const fresh = state.words.filter(w => w.progress.attempts === 0 && !doneIds.has(w.id)).slice(0, state.profile.newPerDay || 4).map(w => ({ id: w.id, intro: true }));
+  const again = s.results.filter(r => r.correct).map(r => r.wordId).filter(id => !fresh.some(f => f.id === id)).slice(0, 6).map(id => ({ id, intro: false, practice: true }));
+  return [...fresh, ...again];
 }
 function bindSession() {
   const s = state.session;
   const q = $('#quitSession'); if (q) q.onclick = () => { state.session = null; render(); };
   const e = $('#endSession'); if (e) e.onclick = () => { state.session = null; state.route = 'home'; render(); };
+  const more = $('#moreSession'); if (more) more.onclick = () => { const items = extraRoundItems(); s.queue = items; s.index = 0; s.results = []; s.round = (s.round || 1) + 1; prepareItem(); render(); window.scrollTo(0, 0); };
   if (s.index >= s.queue.length) return;
   const w = currentWord();
   const sp = $('#speakWord'); if (sp) sp.onclick = () => speak(w.word);
@@ -407,7 +417,10 @@ function bindSession() {
   async function finish(correct, text = '') {
     const today = srs.todayKey();
     const before = w.progress;
-    w.progress = srs.applyResult(before, s.mode, correct, s.hinted, today);
+    const item = s.queue[s.index];
+    if (item && item.practice) { // 연습 회차: 기록만 남기고 복습 일정은 그대로
+      const n = JSON.parse(JSON.stringify(before)); const t = n.tracks[s.mode] || (n.tracks[s.mode] = { ok: 0, miss: 0 }); correct ? t.ok++ : t.miss++; n.lastResult = { mode: s.mode, correct, hinted: s.hinted, date: today, practice: true }; w.progress = n;
+    } else w.progress = srs.applyResult(before, s.mode, correct, s.hinted, today);
     await db.putWord(w);
     const rec = { id: db.uid(), profileId: state.profile.id, wordId: w.id, mode: s.mode, correct, hinted: s.hinted, date: today, gapDays: before.lastReviewed ? srs.daysBetween(before.lastReviewed, today) : 0 };
     await db.putReview(rec); state.reviews.push(rec);
@@ -446,18 +459,30 @@ function renderAdd() {
   const key = ai.getKey();
   const tabs = [['photo', '📷 사진'], ['text', '✎ 문장 붙여넣기'], ['manual', '＋ 직접 입력']];
   let body = '';
-  if (add.tab === 'photo') body = `
-    <p class="muted">책이나 과제에서 형광펜·밑줄·플래그로 표시한 단어를 사진 한 장으로 모아요. 사진은 추출 후 보관하지 않아요.</p>
-    ${key ? '' : '<p class="info-line">사진 읽기는 부모 리포트에서 Gemini API 키(무료)를 연결한 뒤 사용할 수 있어요. 지금은 직접 입력으로 추가할 수 있어요.</p>'}
-    <div class="photo-box">${add.preview ? `<img src="${add.preview}" alt="">` : '<span>사진을 고르거나 찍어 주세요</span>'}</div>
-    <div class="button-row">
-      <label class="btn ghost">📷 카메라로 찍기 <input type="file" id="photoCam" accept="image/*" capture="environment" hidden></label>
-      <label class="btn ghost">🖼 사진첩에서 고르기 <input type="file" id="photo" accept="image/*" hidden></label>
-      <button class="primary" id="extract" ${!add.image || state.busy || !key ? 'disabled' : ''}>${state.busy ? '읽는 중…' : '✨ 표시한 단어 찾기'}</button>
-      <button class="ghost" id="extractPage" ${!add.image || state.busy || !key ? 'disabled' : ''}>📖 페이지 글 가져와서 탭하기</button>
-      <button class="ghost" id="extractPoint" ${!add.image || state.busy || !key ? 'disabled' : ''}>☝ 손가락으로 가리킨 단어</button>
-    </div>
-    ${state.busy ? `<p class="muted small" id="aiProgress">${esc(state.progress)}</p>` : '<p class="muted small">형광펜·플래그 프린트물은 "표시한 단어 찾기". 표시 못 하는 도서관 책은 "페이지 글 가져와서 탭하기"로 모르는 단어를 직접 골라요.</p>'}`;
+  if (add.tab === 'photo') {
+    const step = !add.preview && !add.found.length && !add.sentences.length ? 1 : (add.preview && !add.found.length && !add.sentences.length) ? 2 : 3;
+    const steps = ['사진 찍기', '단어 찾기', '고르기 · 넣기'];
+    const stepBar = `<div class="steps">${steps.map((t, i) => `<div class="step ${i + 1 === step ? 'on' : i + 1 < step ? 'done' : ''}"><span>${i + 1}</span>${t}</div>`).join('')}</div>`;
+    if (step === 1) body = `${stepBar}
+      <div class="big-choices">
+        <label class="big-choice"><span class="big-ic">📷</span><b>카메라로 찍기</b><small>책이나 과제를 정면에서</small><input type="file" id="photoCam" accept="image/*" capture="environment" hidden></label>
+        <label class="big-choice"><span class="big-ic">🖼</span><b>사진첩에서 고르기</b><small>이미 찍어둔 사진</small><input type="file" id="photo" accept="image/*" hidden></label>
+      </div>
+      ${key ? '' : '<p class="info-line">사진 읽기는 부모 리포트에서 Gemini API 키(무료)를 연결한 뒤 사용할 수 있어요. 지금은 직접 입력으로 추가할 수 있어요.</p>'}`;
+    else if (step === 2) body = `${stepBar}
+      <div class="photo-box"><img src="${add.preview}" alt=""></div>
+      ${state.busy ? `<p class="progress-line" id="aiProgress">${esc(state.progress || '읽는 중…')}</p>` : ''}
+      <button class="primary big" id="extract" ${state.busy || !key ? 'disabled' : ''}>${state.busy ? '읽는 중…' : '✨ 이 사진에서 단어 찾기'}</button>
+      <p class="muted small center">형광펜·플래그 표시가 있으면 그 단어를, 없으면 페이지 글을 가져와서 직접 고를 수 있어요.</p>
+      <div class="button-row center-row">
+        <button class="ghost small" id="extractPage" ${state.busy || !key ? 'disabled' : ''}>📖 표시 없어요 · 글만 가져오기</button>
+        <button class="ghost small" id="extractPoint" ${state.busy || !key ? 'disabled' : ''}>☝ 손가락으로 가리킨 단어</button>
+        <button class="ghost small" id="retake">↩ 다른 사진</button>
+      </div>`;
+    else body = `${stepBar}
+      ${add.preview ? `<div class="photo-thumb"><img src="${add.preview}" alt=""><button class="ghost small" id="retake">↩ 다른 사진</button></div>` : ''}
+      ${state.busy ? `<p class="progress-line" id="aiProgress">${esc(state.progress || '읽는 중…')}</p>` : ''}`;
+  }
   else if (add.tab === 'text') body = `
     <p class="muted">문장을 붙여넣으세요. 아이가 표시한 단어는 *별표*로 감싸면 그 단어만 찾아요. 표시가 없으면 어려운 단어를 골라줘요.</p>
     ${key ? '' : '<p class="info-line">문장 분석은 Gemini API 키 연결 후 사용할 수 있어요.</p>'}
@@ -475,28 +500,29 @@ function renderAdd() {
     <div class="button-row"><button class="primary" id="addManual">단어 추가</button></div>`;
   const pickedArr = [...add.picked];
   const foundWords = new Set(add.found.map(f => f.word.toLowerCase()));
-  const page = add.sentences.length ? `<section class="panel">
-    <div class="row between wrap"><h3>페이지에서 모르는 단어 탭하기</h3>
-      <button class="primary" id="definePicked" ${!pickedArr.length || state.busy ? 'disabled' : ''}>${state.busy ? '읽는 중…' : `고른 단어 ${pickedArr.length}개 뜻 만들기`}</button></div>
-    <p class="muted small">단어를 탭하면 골라져요. 다시 탭하면 취소.</p>
+  const page = add.sentences.length ? `<section class="panel tap-panel">
+    <h3>👆 모르는 단어를 눌러요</h3>
+    <p class="muted small">누르면 보라색으로 골라지고, 다시 누르면 취소돼요.</p>
     <div class="page-text">${add.sentences.map(sen => `<p>${sen.split(/(\s+)/).map(tok => {
       const w = tok.toLowerCase().replace(/[^a-z'-]/g, '');
       if (!w || /^\s+$/.test(tok)) return esc(tok);
       const on = add.picked.has(w), had = foundWords.has(w);
       return `<span class="tapword ${on ? 'on' : ''} ${had ? 'had' : ''}" data-w="${esc(w)}">${esc(tok)}</span>`;
     }).join('')}</p>`).join('')}</div>
+    <div class="sticky-bar"><span>${pickedArr.length ? `${pickedArr.length}개 골랐어요` : '아직 고른 단어가 없어요'}</span><button class="primary" id="definePicked" ${!pickedArr.length || state.busy ? 'disabled' : ''}>${state.busy ? '읽는 중…' : '뜻 만들기 →'}</button></div>
   </section>` : '';
   const found = add.found.length ? `<section class="panel">
-    <div class="row between"><h3>찾은 단어 ${add.found.length}개</h3><button class="primary" id="addFound">선택한 단어 추가</button></div>
+    <h3>✅ 찾은 단어 ${add.found.length}개</h3>
     ${add.note ? `<p class="info-line">${esc(add.note)}</p>` : '<p class="muted">표시한 단어와 문맥에 맞는 뜻인지 확인해 주세요. 뜻은 고칠 수 있어요.</p>'}
     ${add.found.map((f, i) => `<div class="found ${f.checked ? '' : 'off'}">
       <label class="chk"><input type="checkbox" data-i="${i}" ${f.checked ? 'checked' : ''}><b>${esc(f.word)}</b> <span class="muted">${esc(f.korean || '')}</span></label>
       <input data-def="${i}" value="${esc(f.definition)}">
       ${f.context ? `<p class="muted small">“${esc(f.context)}”</p>` : ''}
-    </div>`).join('')}</section>` : '';
+    </div>`).join('')}
+    <button class="primary big" id="addFound">📥 단어장에 넣기 (${add.found.filter(f => f.checked).length}개)</button></section>` : '';
   return `<p class="eyebrow">COLLECT</p><h1>단어 추가하기</h1>
     <div class="tabs">${tabs.map(([id, l]) => `<button class="tab ${add.tab === id ? 'active' : ''}" data-tab="${id}">${l}</button>`).join('')}</div>
-    <section class="panel">${body}</section>${found}${page}
+    <section class="panel">${body}</section>${page}${found}
     ${state.words.length < 8 ? `<p class="muted center"><button class="text-link" id="addSamples">예시 단어 8개로 체험하기</button></p>` : ''}`;
 }
 function bindAdd() {
@@ -506,6 +532,7 @@ function bindAdd() {
     if (f.size > 2e7) { toast('20MB 이하의 사진을 선택해 주세요.', 'error'); return; }
     try { const r = await ai.fileToBase64(f); add.image = r; add.imageFile = f; add.preview = r.preview; add.found = []; add.sentences = []; add.picked = new Set(); render(); } catch (err) { toast(err.message, 'error'); }
   };
+  const rt = $('#retake'); if (rt) rt.onclick = () => { add.image = null; add.imageFile = null; add.preview = ''; add.found = []; add.sentences = []; add.picked = new Set(); render(); };
   const ph = $('#photo'); if (ph) ph.onchange = onPhoto;
   const pc = $('#photoCam'); if (pc) pc.onchange = onPhoto;
   const imgOpts = () => ({ key: ai.getKey(), imageBase64: add.image.base64, mime: add.image.mime, age: state.profile.age, level: state.profile.level });
@@ -536,9 +563,9 @@ function bindAdd() {
       const have = new Set(add.found.map(f => f.word.toLowerCase()));
       add.found.push(...got.filter(g => !have.has(g.word.toLowerCase())));
       add.picked.clear();
-      if (!got.length) toast('뜻을 만들지 못했어요. 다시 시도해 주세요.');
+      if (!got.length) toast('뜻을 만들지 못했어요. 다시 시도해 주세요.'); else toast(`${got.length}개 단어의 뜻을 만들었어요. 아래에서 확인하고 단어장에 넣어요.`, 'success');
     } catch (err) { toast(err.message, 'error'); }
-    state.busy = false; render();
+    state.busy = false; render(); setTimeout(() => document.getElementById('addFound')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
   };
   const tx = $('#text'); if (tx) tx.oninput = e => { add.text = e.target.value; };
   const et = $('#extractText'); if (et) et.onclick = () => { if (!add.text.trim()) return toast('문장을 먼저 붙여넣어 주세요.'); runExtract(() => ai.extractFromText({ key: ai.getKey(), text: add.text, age: state.profile.age, level: state.profile.level })); };
