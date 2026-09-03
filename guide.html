@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Word Orbit · 처음 시작하기</title>
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+  <style>
+    body { padding: 0; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: calc(20px + env(safe-area-inset-top, 0px)) 18px 60px; }
+    .step { display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: start; }
+    .num { width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; }
+    .step h3 { margin-top: 6px; }
+    ol, ul { padding-left: 1.2em; } li { margin: .3em 0; }
+    code { background: var(--soft); padding: 1px 6px; border-radius: 6px; font-size: .9em; }
+    .qa b { display: block; margin-top: .6em; }
+    .toc a { display: inline-block; margin: 2px 8px 2px 0; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">GETTING STARTED</p>
+  <h1>Word Orbit 처음 시작하기</h1>
+  <p class="muted">책에서 만난 단어가 오래 남는 기억으로. 아이가 읽은 책·과제의 단어를 사진으로 모으고, 기억곡선에 맞춰 복습하는 무료 앱이에요. 서버가 없어서 모든 기록은 <b>이 기기 안에만</b> 저장되고, 만든 사람에게도 전달되지 않아요.</p>
+  <p class="toc"><a href="#install">① 설치</a> <a href="#profile">② 아이 프로필</a> <a href="#key">③ AI 연결 (선택)</a> <a href="#photo">④ 사진 찍는 요령</a> <a href="#daily">⑤ 하루 사용법</a> <a href="#data">⑥ 데이터·백업</a> <a href="#faq">⑦ 자주 묻는 질문</a></p>
+  <p><a class="btn primary" href="./">앱 열기 →</a></p>
+
+  <section class="panel step" id="install"><div class="num">1</div><div>
+    <h3>앱처럼 설치하기 (1분)</h3>
+    <p>주소를 연 다음 홈 화면에 추가하면 아이콘이 생기고 앱처럼 열려요.</p>
+    <ul>
+      <li><b>아이패드·아이폰 (Safari)</b>: 아래 공유 버튼(네모에 화살표) → <b>홈 화면에 추가</b></li>
+      <li><b>안드로이드 (Chrome)</b>: 오른쪽 위 ⋮ → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b></li>
+      <li><b>컴퓨터</b>: 그냥 브라우저에서 열어도 돼요. Chrome이 가장 잘 맞아요.</li>
+    </ul>
+    <p class="muted small">기록은 기기별로 따로 저장돼요. 아이가 주로 쓰는 태블릿 한 대에 설치하는 걸 추천해요.</p>
+  </div></section>
+
+  <section class="panel step" id="profile"><div class="num">2</div><div>
+    <h3>아이 프로필 만들기</h3>
+    <p>처음 열면 이름·나이·학년·영어 읽기 수준·하루 목표(분)를 물어봐요. 학년과 읽기 수준은 책 추천과 설명 난이도에 쓰여요. 나중에 <b>부모 리포트</b>에서 언제든 바꿀 수 있고, 형제는 프로필을 따로 추가하면 기록이 분리돼요.</p>
+    <p>시작하면 예시 단어 8개가 들어 있어요. <b>오늘의 학습 시작</b>을 눌러 한 바퀴 돌아보세요. 키 없이도 단어 학습·복습·책 추천·책장은 전부 돼요.</p>
+  </div></section>
+
+  <section class="panel step" id="key"><div class="num">3</div><div>
+    <h3>AI 연결하기 (선택 · 무료)</h3>
+    <p>사진에서 표시한 단어 읽기, "더 쉽게 설명해 줘", 아이가 설명한 뜻 채점 — 이 세 가지에만 AI(Google Gemini)를 써요. 각 가정이 <b>자기 구글 계정의 무료 키</b>를 넣는 방식이라 비용이 들지 않고, 키는 이 기기 안에만 저장돼요.</p>
+    <ol>
+      <li><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> 에 구글 계정으로 로그인</li>
+      <li><b>Create API key</b> 클릭. 프로젝트를 물어보면 "새 프로젝트 만들기". 이름은 아무거나 (예: word-orbit)</li>
+      <li>만들어진 키(<code>AQ.</code> 또는 <code>AIza</code>로 시작)를 <b>복사</b> — 이 화면을 벗어나면 전체 키가 다시 안 보일 수 있어요</li>
+      <li>앱의 <b>부모 리포트 → AI 연결</b>에 붙여넣고 <b>연결 확인</b>. "AI를 연결했어요"가 뜨면 끝</li>
+    </ol>
+    <p class="info-line">"The request is suspicious" 오류가 나면: 다른 네트워크(집 와이파이 ↔ 폰 데이터)나 <b>폰에서</b> 다시 시도해 보세요. 그래도 안 되면 하루 뒤에 다시 하거나 다른 구글 계정으로 해보세요. 결제 정보는 넣지 않아도 돼요.</p>
+    <p class="muted small">무료 한도는 한 가정이 하루에 사진 수십 장을 찍어도 충분해요. 한도를 넘으면 앱이 "잠시 후 다시" 라고 알려주고, 요금이 자동으로 붙지는 않아요. 키는 다른 사람과 공유하지 마세요.</p>
+  </div></section>
+
+  <section class="panel step" id="photo"><div class="num">4</div><div>
+    <h3>사진 찍는 요령</h3>
+    <ul>
+      <li><b>프린트물·자기 책</b>: 형광펜이나 플래그로 표시한 뒤 <b>단어 추가하기 → 사진 → 표시한 단어 찾기</b>. 표시한 단어만 골라서 뜻·예문·문맥을 만들어요.</li>
+      <li><b>도서관 책 (표시 못 할 때)</b>: <b>페이지 글 가져와서 탭하기</b>. 페이지 글이 화면에 뜨면 모르는 단어를 손가락으로 탭해서 고르고 "뜻 만들기".</li>
+      <li><b>읽다가 한 단어씩</b>: 단어를 손가락으로 짚은 채로 찍고 <b>손가락으로 가리킨 단어</b>.</li>
+    </ul>
+    <p class="muted small">밝은 곳에서 페이지가 화면에 꽉 차게, 정면에서 찍으면 인식이 좋아요. 사진은 단어를 뽑은 뒤 바로 지워지고 어디에도 저장되지 않아요.</p>
+  </div></section>
+
+  <section class="panel step" id="daily"><div class="num">5</div><div>
+    <h3>하루 사용법</h3>
+    <p>홈의 <b>오늘의 기억 돌보기</b>에 그날 만날 단어 수가 떠요. 복습할 단어와 새 단어를 섞어 하루 목표(기본 10분) 안에서만 내주고, 밀린 복습이 많으면 새 단어를 자동으로 줄여요. 문제는 뜻 고르기 → 단어 말하기 → 철자 쓰기 → 내 말로 설명하기 순으로 바뀌고, 같은 단어를 여러 날에 걸쳐 힌트 없이 떠올리면 구슬이 <b>기억 보관소</b>로 굴러가요.</p>
+    <p><b>다음에 읽을 책</b>은 퀸즐랜드 Premier's Reading Challenge 목록과 CBCA 수상·후보작 500권에서 아이 학년·관심사에 맞춰 골라줘요. 읽고 나서 "읽었어요"를 누르면 <b>나의 책장</b>에 꽂히고, 엑셀로 내보낼 수도 있어요.</p>
+  </div></section>
+
+  <section class="panel step" id="data"><div class="num">6</div><div>
+    <h3>데이터와 백업</h3>
+    <p>모든 기록은 이 기기의 브라우저 안에 있어요. 기기를 바꾸거나 브라우저 데이터를 지우면 사라지니, 가끔 <b>부모 리포트 → 백업 내보내기</b>로 파일을 저장해 두세요. 새 기기에서는 <b>백업 가져오기</b>로 복원해요.</p>
+    <p class="muted small">앱을 만든 사람은 여러분의 단어·기록·키·사진을 볼 수 없어요. 사진과 답변은 AI 평가 때만 Google로 전송돼요.</p>
+  </div></section>
+
+  <section class="panel qa" id="faq">
+    <h3>자주 묻는 질문</h3>
+    <b>키를 안 넣으면 뭘 못 하나요?</b> 사진 인식, 쉬운 설명, 뜻 설명 채점만 못 해요. 단어는 직접 입력으로 추가할 수 있고, 뜻 설명 문제는 부모가 "맞아요" 버튼으로 확인해요.
+    <b>"AI가 지금 붐벼요"라고 떠요.</b> 구글 쪽이 몰리는 시간이에요. 앱이 다른 모델로 자동으로 다시 시도하고, 그래도 안 되면 몇 분 뒤에 해보세요.
+    <b>바뀐 게 안 보여요.</b> 앱을 완전히 닫았다가 다시 열어보세요. 그래도 안 되면 브라우저에서 새로고침.
+    <b>발음이 호주식/미국식이었으면 해요.</b> 부모 리포트 → 아이 설정 → 발음.
+    <b>형제가 같이 써요.</b> 부모 리포트 → 아이 프로필 추가. 왼쪽 메뉴 아래에서 바꿔요.
+    <b>도서 목록의 출처는요?</b> 퀸즐랜드 교육부 Premier's Reading Challenge 공식 목록과 CBCA Book of the Year 2018–2026 수상·아너·후보작이에요. 기관이 이 앱을 인증한 것은 아니에요.
+  </section>
+
+  <p class="center"><a class="btn primary" href="./">앱 열기 →</a></p>
+  <p class="muted small center">Word Orbit · 가족과 친구를 위해 만든 비영리 앱 · 글자 읽기 엔진: Tesseract.js (Apache-2.0)</p>
+</div>
+</body>
+</html>

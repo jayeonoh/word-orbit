@@ -90,13 +90,14 @@ export function toSentences(text) {
     .replace(/-\n(?=[a-z])/g, '')            // 줄 끝 하이픈 이어붙이기
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{2,}/g, '\n')
-    .replace(/(?<![.!?])\n(?=[a-z,])/g, ' ')   // 문장 중간 줄바꿈은 공백으로
+    .replace(/([^.!?\n])\n(?=[a-z,])/g, '$1 ')   // 문장 중간 줄바꿈은 공백으로 (Safari 호환: lookbehind 미사용)
     .replace(/\n/g, ' ')
     .replace(/[|«»<>\[\]{}=~^_*#@\\]/g, ' ')   // OCR 잡음 기호 제거
     .replace(/\b\d+\)\s*(?:[A-Za-z]{1,2}\b)?/g, ' ') // 옆 칸 문제 번호 조각 ("1) Wh") 제거
     .replace(/\s{2,}/g, ' ');
   return clean
-    .split(/(?<=[.!?])\s+(?=[A-Z"“])/)
+    .replace(/([.!?])\s+(?=[A-Z"“])/g, '$1\u0001')   // 문장 경계 표시 (Safari 호환: lookbehind 미사용)
+    .split('\u0001')
     .map(s => s.trim())
     .filter(s => s.length >= 12 && (s.match(/[A-Za-z]{3,}/g) || []).length >= 3)
     .slice(0, 60);

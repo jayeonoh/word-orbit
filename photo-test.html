@@ -39,8 +39,8 @@
   </section>
 </div>
 <script type="module">
-  import * as ai from './js/ai.js?v=5';
-  import { pageSentences } from './js/ocr.js?v=5';
+  import * as ai from './js/ai.js?v=7';
+  import { pageSentences } from './js/ocr.js?v=7';
   const $ = s => document.querySelector(s);
   ai.onProgressChange(m => { $('#log').textContent = ($('#log').dataset.base || '') + ' · ' + m; });
   const fillModels = (names) => { $('#model').innerHTML = `<option value="">자동 선택</option>` + names.map(m => `<option ${ai.getModel() === m ? 'selected' : ''}>${m}</option>`).join(''); };

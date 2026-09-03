@@ -1,10 +1,10 @@
 // app.js — 화면과 흐름. 프레임워크 없이 동작합니다.
-import { db } from './db.js?v=6';
-import * as srs from './srs.js?v=6';
-import * as ai from './ai.js?v=6';
-import { SAMPLE_WORDS, TOPICS } from './data.js?v=6';
-import { recommend, browse, BANDS, BAND_LABEL, KIND_LABEL, BURDEN_LABEL, badgeText, hasAward, childBand, gradeFromAge, STATS, BOOKS as BOOKS_ALL } from './books.js?v=6';
-import { pageSentences } from './ocr.js?v=6';
+import { db } from './db.js?v=7';
+import * as srs from './srs.js?v=7';
+import * as ai from './ai.js?v=7';
+import { SAMPLE_WORDS, TOPICS } from './data.js?v=7';
+import { recommend, browse, BANDS, BAND_LABEL, KIND_LABEL, BURDEN_LABEL, badgeText, hasAward, childBand, gradeFromAge, STATS, BOOKS as BOOKS_ALL } from './books.js?v=7';
+import { pageSentences } from './ocr.js?v=7';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -112,7 +112,7 @@ function render() {
         <span class="avatar" title="${esc(state.profile.name)}">${esc(state.profile.name.slice(0, 1).toUpperCase())}</span>
       </header>
       <div class="page">${page}</div>
-      <footer class="app-footer"><span>✦ wordorbit</span><span>Every word opens a little world.</span></footer>
+      <footer class="app-footer"><span>✦ wordorbit · <a href="guide.html">시작 안내</a></span><span>Every word opens a little world.</span></footer>
     </main>`;
   bindCommon();
   if (state.session) bindSession(); else ({ home: bindHome, add: bindAdd, words: bindWords, memory: bindMemory, books: bindBooks, shelf: bindShelf, parents: bindParents }[state.route] || bindHome)();
@@ -135,7 +135,7 @@ function renderOnboarding() {
   return `<div class="onboard">
     <div class="brand big">✦ Word Orbit</div>
     <h1>책에서 만난 단어가<br>오래 남는 기억으로.</h1>
-    <p class="muted">서버 없이 이 기기 안에서만 동작해요. 먼저 아이 프로필을 만들어 주세요.</p>
+    <p class="muted">서버 없이 이 기기 안에서만 동작해요. 먼저 아이 프로필을 만들어 주세요. <a href="guide.html">처음이세요? 시작 안내 →</a></p>
     ${profileForm({})}
     <button class="primary big" id="createProfile">시작하기</button>
   </div>`;
@@ -776,12 +776,17 @@ function renderParents() {
     <section class="panel">
       <div class="row between"><h3>AI 연결 (Google Gemini 무료 티어)</h3><span class="pill">${key && ai.getModel() ? `● 연결됨 · ${esc(ai.getModel())}` : '○ 연결 대기'}</span></div>
       <p class="muted">사진 속 표시 단어 읽기, 더 쉬운 설명, 뜻 설명 채점에만 사용해요. 복습 일정과 퀴즈는 AI 없이 동작해요.</p>
-      <p class="muted small">키는 이 기기 브라우저에만 저장되고, 사진과 답변은 평가할 때 Google로 전송돼요. 원본 사진은 저장하지 않아요. 무료 키 발급: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></p>
+      <p class="muted small">키는 이 기기 브라우저에만 저장되고, 사진과 답변은 평가할 때 Google로 전송돼요. 원본 사진은 저장하지 않아요. 무료 키 발급: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> · <a href="guide.html#key">발급 방법 안내</a></p>
       <div class="form-grid">
         <label class="wide">Gemini API 키<input id="apikey" type="password" autocomplete="off" placeholder="AQ.… 또는 AIza…" value="${esc(key)}"></label>
         <label>모델 <span class="muted small">(연결 확인 시 자동 선택)</span><select id="model"><option value="">자동</option>${ai.getModelList().map(m => `<option ${ai.getModel() === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
       </div>
       <div class="button-row"><button class="ghost" id="aiDisconnect" ${key ? '' : 'disabled'}>연결 해제</button><button class="primary" id="aiConnect" ${state.busy ? 'disabled' : ''}>${state.busy ? '확인 중…' : '연결 확인'}</button></div>
+    </section>
+    <section class="panel">
+      <h3>지인에게 알려주기</h3>
+      <p class="muted">앱 주소만 보내면 돼요. 각 가정이 자기 무료 키를 넣어 쓰므로 비용도, 기록 공유도 없어요.</p>
+      <div class="button-row"><button class="ghost" id="shareApp">🔗 앱 주소 복사</button><a class="btn ghost" href="guide.html" target="_blank">시작 안내 보기</a></div>
     </section>
     <section class="panel">
       <h3>데이터</h3>
@@ -806,6 +811,10 @@ function bindParents() {
     state.busy = false; render();
   };
   $('#aiDisconnect').onclick = () => { ai.setKey(''); toast('연결을 해제했어요.'); render(); };
+  $('#shareApp').onclick = async () => {
+    const url = location.origin + location.pathname.replace(/[^/]*$/, '') + 'guide.html';
+    try { if (navigator.share) await navigator.share({ title: 'Word Orbit', text: '책에서 만난 단어가 오래 남는 기억으로 — 아이 단어장 앱', url }); else { await navigator.clipboard.writeText(url); toast('안내 페이지 주소를 복사했어요.', 'success'); } } catch {}
+  };
   $('#exportData').onclick = async () => {
     const data = await db.exportAll();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
