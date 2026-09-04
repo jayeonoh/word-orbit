@@ -65,22 +65,25 @@ export function pickModel(names, preferred = '') { return rankModels(names, pref
 // 붐빔(503/429 high demand) 시 다음 후보 모델로 자동 재시도
 function isBusy(status, msg) { return status === 503 || /high demand|overloaded|try again later/i.test(msg || ''); }
 
-async function call({ key, model, parts, json = true, temperature = 0.3 }) {
+async function call({ key, model, parts, json = true, temperature = 0.3, maxCandidates = 5 }) {
   if (!key) throw new Error('Gemini API 키를 먼저 설정해 주세요. (부모 리포트)');
   model = model || getModel();
   if (!model) throw new Error('먼저 부모 리포트에서 "연결 확인"을 눌러 모델을 정해 주세요.');
-  // 후보: flash/lite 계열 최대 5개 (pro 계열은 느리고 한도가 적어 제외). 한도 초과·붐빔이면 다음 모델로
+  // 후보: flash/lite 계열 (pro 계열은 느리고 한도가 적어 제외). 한도 초과·붐빔이면 다음 모델로
   const ranked = rankModels(getModelList(), model).filter(n => n === model || (/flash/.test(n) && !/pro/.test(n)));
-  const candidates = ranked.slice(0, 5);
+  const candidates = ranked.slice(0, maxCandidates);
   if (!candidates.length) candidates.push(model);
   let lastErr = null;
   for (const m of candidates) {
-    try { onProgress(`${m} 로 요청 중…`); bumpUsage(m); const r = await callOnce({ key, model: m, parts, json, temperature }); if (m !== getModel()) setModel(m); return r; }
+    const t0 = Date.now();
+    const tick = setInterval(() => onProgress(`${m} · ${Math.round((Date.now() - t0) / 1000)}초`), 1000);
+    try { onProgress(`${m} 로 요청 중…`); bumpUsage(m); const r = await callOnce({ key, model: m, parts, json, temperature }); if (m !== getModel()) setModel(m); onProgress(`완료 · ${Math.round((Date.now() - t0) / 1000)}초 (${m})`); return r; }
     catch (err) {
       lastErr = err;
       if (err.quota) { markExhausted(m); onProgress(`${m} 오늘 한도 끝 → 다음 모델로`); continue; }
       if (!err.busy) throw err; onProgress(`${m} 붐빔 → 다음 모델로`);
     }
+    finally { clearInterval(tick); }
   }
   if (lastErr && lastErr.quota) throw new Error('오늘 쓸 수 있는 무료 모델의 한도를 모두 썼어요. 브리즈번 시간 오후 5~6시쯤 새로 시작돼요.');
   throw new Error((lastErr && lastErr.message) || '잠시 후 다시 시도해 주세요.');
@@ -93,10 +96,18 @@ function onProgress(msg) { try { progressHandler(msg); } catch {} }
 
 const TIMEOUT_MS = 40000; // 한 번의 요청은 40초까지만 기다림
 
-async function callOnce({ key, model, parts, json, temperature }) {
+// 최신 모델은 답하기 전에 '생각'을 해서 느려요. 이 앱의 작업(단어 찾기·뜻 만들기)은 생각이 필요 없어서 꺼둡니다.
+function noThink(model) { try { return (JSON.parse(localStorage.getItem('wo.noThink') || '[]')).includes(model); } catch { return false; } }
+function markNoThink(model) { try { const a = JSON.parse(localStorage.getItem('wo.noThink') || '[]'); if (!a.includes(model)) { a.push(model); localStorage.setItem('wo.noThink', JSON.stringify(a)); } } catch {} }
+
+async function callOnce({ key, model, parts, json, temperature, noThinking = true }) {
   const body = {
     contents: [{ role: 'user', parts }],
-    generationConfig: { temperature, ...(json ? { responseMimeType: 'application/json' } : {}) },
+    generationConfig: {
+      temperature,
+      ...(json ? { responseMimeType: 'application/json' } : {}),
+      ...(noThinking && !noThink(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+    },
   };
   const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   let res;
@@ -112,6 +123,8 @@ async function callOnce({ key, model, parts, json, temperature }) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = data?.error?.message || `요청 실패 (${res.status})`;
+    // 이 모델이 '생각 끄기'를 지원하지 않으면 기억해 두고 그대로 다시 시도
+    if (res.status === 400 && /thinking/i.test(msg) && noThinking && !noThink(model)) { markNoThink(model); return callOnce({ key, model, parts, json, temperature, noThinking: false }); }
     if (res.status === 429 && /per day|daily|quota|exhausted|RPD|PerDay/i.test(msg)) { const e = new Error(`오늘 무료 한도를 다 썼어요 (${model}).`); e.quota = true; throw e; }
     if (isBusy(res.status, msg) || res.status === 429) { const e = new Error(`AI가 지금 붐벼요 (${model}). 잠시 후 다시 시도해 주세요.`); e.busy = true; throw e; }
     if (res.status === 404) throw new Error('모델 이름이 더 이상 유효하지 않아요. 부모 리포트에서 "연결 확인"을 다시 눌러 주세요.');
@@ -168,14 +181,14 @@ ${marking}
 ${levelText(age, level)}
 ${WORD_SCHEMA}`;
   }
-  return call({ key, model, parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: imageBase64 } }] });
+  return call({ key, model, parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: imageBase64 } }], maxCandidates: 2 });
 }
 
 // 아이가 손으로 쓴 한 단어 읽기 (철자 문제용)
 export async function readHandwriting({ key, model, imageBase64, mime = 'image/png' }) {
   const prompt = `This image shows ONE English word handwritten by a child with a finger or stylus. Read exactly what is written, letter by letter, even if it is misspelled — do NOT correct it to a real word. Lowercase unless clearly capital.
 Return JSON only: {"text": "the letters you read", "uncertain": true/false}`;
-  return call({ key, model, parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: imageBase64 } }], temperature: 0 });
+  return call({ key, model, parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: imageBase64 } }], temperature: 0, maxCandidates: 2 });
 }
 
 // 직접 입력한 단어 하나(또는 여러 개)의 뜻·예문·오답 만들기 — 문맥 문장이 있으면 그 뜻으로
@@ -249,7 +262,7 @@ export async function testConnection({ key, model }) {
 }
 
 // 사진을 1600px 이하 JPEG로 줄여서 base64로 (무료 한도 절약 + 업로드 속도)
-export function fileToBase64(file, max = 1600) {
+export function fileToBase64(file, max = 1280) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -259,7 +272,7 @@ export function fileToBase64(file, max = 1600) {
       c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(url);
-      const dataUrl = c.toDataURL('image/jpeg', 0.85);
+      const dataUrl = c.toDataURL('image/jpeg', 0.8);
       resolve({ base64: dataUrl.split(',')[1], mime: 'image/jpeg', preview: dataUrl });
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('사진을 열지 못했어요.')); };

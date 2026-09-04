@@ -1,10 +1,10 @@
 // app.js — 화면과 흐름. 프레임워크 없이 동작합니다.
-import { db } from './db.js?v=8';
-import * as srs from './srs.js?v=8';
-import * as ai from './ai.js?v=8';
-import { SAMPLE_WORDS, TOPICS } from './data.js?v=8';
-import { recommend, browse, BANDS, BAND_LABEL, KIND_LABEL, BURDEN_LABEL, badgeText, hasAward, childBand, gradeFromAge, STATS, BOOKS as BOOKS_ALL } from './books.js?v=8';
-import { pageSentences, readWordImage } from './ocr.js?v=8';
+import { db } from './db.js?v=9';
+import * as srs from './srs.js?v=9';
+import * as ai from './ai.js?v=9';
+import { SAMPLE_WORDS, TOPICS } from './data.js?v=9';
+import { recommend, browse, BANDS, BAND_LABEL, KIND_LABEL, BURDEN_LABEL, badgeText, hasAward, childBand, gradeFromAge, STATS, BOOKS as BOOKS_ALL } from './books.js?v=9';
+import { pageSentences, readWordImage } from './ocr.js?v=9';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -630,6 +630,7 @@ function bindAdd() {
   const as = $('#addSamples'); if (as) as.onclick = async () => { const n = await addWords(SAMPLE_WORDS, 'sample'); toast(`예시 단어 ${n}개를 넣었어요.`, 'success'); render(); };
   async function runExtract(fn, kind = 'words') {
     state.busy = true; state.progress = '사진을 보내는 중…'; render();
+    const t0 = Date.now();
     try {
       const r = await fn();
       const words = (r.words || []).filter(x => x.word && x.definition).map(x => ({ ...x, checked: true, distractors: Array.isArray(x.distractors) ? x.distractors : [] }));
@@ -643,7 +644,9 @@ function bindAdd() {
       }
       add.picked = new Set();
     } catch (err) { toast(err.message, 'error'); }
+    const sec = Math.round((Date.now() - t0) / 1000);
     state.busy = false; state.progress = ''; render();
+    if (sec >= 20) toast(`${sec}초 걸렸어요. 계속 느리면 부모 리포트에서 다른 모델을 골라 보세요.`);
   }
 }
 

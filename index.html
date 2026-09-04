@@ -30,6 +30,6 @@
     window.addEventListener('unhandledrejection', function (e) { if (window.__woBooted) { console.warn('[wo]', e.reason); return; } window.__woShowError(e.reason && e.reason.message ? e.reason.message : e.reason); });
     window.__woBootTimer = setTimeout(function () { if (!window.__woBooted) window.__woShowError('10초 안에 앱이 열리지 않았어요. 인터넷이 느리거나 브라우저가 옛 파일을 들고 있을 수 있어요.'); }, 10000);
   </script>
-  <script type="module" src="js/app.js?v=8"></script>
+  <script type="module" src="js/app.js?v=9"></script>
 </body>
 </html>
