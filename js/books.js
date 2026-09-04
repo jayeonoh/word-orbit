@@ -1,6 +1,6 @@
 // books.js — AI 없이 규칙으로 도서 추천.
 // 공신력은 선정 근거(BOOKS의 sources: 퀸즐랜드 PRC 목록·CBCA 수상/후보)에서, 개인화는 아이의 반응과 학습 기록에서.
-import { BOOKS } from './books-data.js?v=9';
+import { BOOKS } from './books-data.js?v=10';
 export { BOOKS };
 
 export const BANDS = ['P-1', '2-3', '4-5', '6-7'];

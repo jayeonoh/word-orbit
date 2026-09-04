@@ -123,8 +123,8 @@ async function callOnce({ key, model, parts, json, temperature, noThinking = tru
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = data?.error?.message || `요청 실패 (${res.status})`;
-    // 이 모델이 '생각 끄기'를 지원하지 않으면 기억해 두고 그대로 다시 시도
-    if (res.status === 400 && /thinking/i.test(msg) && noThinking && !noThink(model)) { markNoThink(model); return callOnce({ key, model, parts, json, temperature, noThinking: false }); }
+    // 이 모델이 '생각 끄기'를 지원하지 않으면 (400 계열 오류) 기억해 두고 그 설정 없이 다시 시도
+    if ((res.status === 400 || res.status === 404) && noThinking && !noThink(model)) { markNoThink(model); return callOnce({ key, model, parts, json, temperature, noThinking: false }); }
     if (res.status === 429 && /per day|daily|quota|exhausted|RPD|PerDay/i.test(msg)) { const e = new Error(`오늘 무료 한도를 다 썼어요 (${model}).`); e.quota = true; throw e; }
     if (isBusy(res.status, msg) || res.status === 429) { const e = new Error(`AI가 지금 붐벼요 (${model}). 잠시 후 다시 시도해 주세요.`); e.busy = true; throw e; }
     if (res.status === 404) throw new Error('모델 이름이 더 이상 유효하지 않아요. 부모 리포트에서 "연결 확인"을 다시 눌러 주세요.');

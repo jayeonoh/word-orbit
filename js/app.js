@@ -1,10 +1,10 @@
 // app.js — 화면과 흐름. 프레임워크 없이 동작합니다.
-import { db } from './db.js?v=9';
-import * as srs from './srs.js?v=9';
-import * as ai from './ai.js?v=9';
-import { SAMPLE_WORDS, TOPICS } from './data.js?v=9';
-import { recommend, browse, BANDS, BAND_LABEL, KIND_LABEL, BURDEN_LABEL, badgeText, hasAward, childBand, gradeFromAge, STATS, BOOKS as BOOKS_ALL } from './books.js?v=9';
-import { pageSentences, readWordImage } from './ocr.js?v=9';
+import { db } from './db.js?v=10';
+import * as srs from './srs.js?v=10';
+import * as ai from './ai.js?v=10';
+import { SAMPLE_WORDS, TOPICS } from './data.js?v=10';
+import { recommend, browse, BANDS, BAND_LABEL, KIND_LABEL, BURDEN_LABEL, badgeText, hasAward, childBand, gradeFromAge, STATS, BOOKS as BOOKS_ALL } from './books.js?v=10';
+import { pageSentences, readWordImage } from './ocr.js?v=10';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
